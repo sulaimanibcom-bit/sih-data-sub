@@ -1,0 +1,18 @@
+{
+  "name": "SIH DATA SUB",
+  "short_name": "SIH DATA SUB",
+  "description": "Fast, Secure and Reliable VTU services for data, airtime, bills and digital services.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#102b57",
+  "theme_color": "#102b57",
+  "lang": "en-NG",
+  "dir": "ltr",
+  "categories": [
+    "business",
+    "finance",
+    "utilities"
+  ]
+}

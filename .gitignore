@@ -1,0 +1,8 @@
+.env
+backend/.env
+node_modules/
+backend/users.json
+backend/wallets.json
+backend/transactions.json
+backend/funding.json
+backend/bonus.json
