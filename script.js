@@ -1,3866 +1,1574 @@
-/* =========================================================
-   SIH DATA SUB
-   COMPLETE SCRIPT.JS
-   SIGNUP FLOW:
-   FULL NAME
-   PHONE NUMBER
-   GMAIL / EMAIL
-   PASSWORD
-   CONFIRM PASSWORD
-   ↓
-   SIGN UP
-   ↓
-   OTP SENT TO GMAIL
-   ↓
-   ENTER 6-DIGIT OTP
-   ↓
-   AUTOMATIC VERIFICATION
-   ↓
-   ACCOUNT CREATED
-   ↓
-   DASHBOARD
-========================================================= */
-
 "use strict";
 
-
 /* =========================================================
-   CONFIGURATION
+   SIH DATA SUB
+   Frontend JavaScript
+   Backend: http://localhost:5100
 ========================================================= */
 
 const API_BASE = "http://localhost:5100";
 
-const TOKEN_KEY = "sihDataSubToken";
-const USER_KEY = "sihDataSubUser";
-const TRANSACTIONS_KEY = "sihDataSubTransactions";
-const BONUS_KEY = "sihDataSubBonus";
-
-
-/* =========================================================
-   APP STATE
-========================================================= */
+const TOKEN_KEY = "sih_token";
+const USER_KEY = "sih_user";
 
 let currentUser = null;
-let authToken = null;
 let currentService = null;
-let toastTimer = null;
-let splashTimer = null;
-
-let signupWaitingForOTP = false;
-let otpVerificationRunning = false;
-
 
 /* =========================================================
-   DOM HELPERS
+   BASIC HELPERS
 ========================================================= */
 
-function $(id) {
-  return document.getElementById(id);
+const $ = (id) => document.getElementById(id);
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
 }
 
-function $all(selector) {
-  return document.querySelectorAll(selector);
-}
-
-
-function on(id, event, handler) {
-
-  const element = $(id);
-
-  if (!element) {
-    return;
+function getSavedUser() {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY) || "null");
+  } catch {
+    return null;
   }
-
-  element.addEventListener(
-    event,
-    handler
-  );
 }
-
-
-/* =========================================================
-   SESSION
-========================================================= */
 
 function saveSession(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user || {}));
 
-  if (token) {
-
-    localStorage.setItem(
-      TOKEN_KEY,
-      token
-    );
-
-  }
-
-  if (user) {
-
-    localStorage.setItem(
-      USER_KEY,
-      JSON.stringify(user)
-    );
-
-  }
-
+  currentUser = user || {};
 }
-
-
-function loadSession() {
-
-  authToken =
-    localStorage.getItem(
-      TOKEN_KEY
-    );
-
-  const savedUser =
-    localStorage.getItem(
-      USER_KEY
-    );
-
-
-  if (savedUser) {
-
-    try {
-
-      currentUser =
-        JSON.parse(
-          savedUser
-        );
-
-    } catch (error) {
-
-      currentUser = null;
-
-    }
-
-  }
-
-}
-
 
 function clearSession() {
-
-  localStorage.removeItem(
-    TOKEN_KEY
-  );
-
-  localStorage.removeItem(
-    USER_KEY
-  );
-
-  authToken = null;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
   currentUser = null;
-
 }
 
-
-/* =========================================================
-   TRANSACTIONS
-========================================================= */
-
-function getTransactions() {
-
-  try {
-
-    return JSON.parse(
-      localStorage.getItem(
-        TRANSACTIONS_KEY
-      ) || "[]"
-    );
-
-  } catch (error) {
-
-    return [];
-
-  }
-
+function escapeHTML(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
-
-
-function saveTransactions(
-  transactions
-) {
-
-  localStorage.setItem(
-    TRANSACTIONS_KEY,
-    JSON.stringify(
-      transactions
-    )
-  );
-
-}
-
-
-function addTransaction(
-  transaction
-) {
-
-  const transactions =
-    getTransactions();
-
-  transactions.unshift(
-    transaction
-  );
-
-  saveTransactions(
-    transactions.slice(
-      0,
-      100
-    )
-  );
-
-}
-
-
-/* =========================================================
-   BONUS
-========================================================= */
-
-function getBonus() {
-
-  const value =
-    Number(
-      localStorage.getItem(
-        BONUS_KEY
-      )
-    );
-
-  return Number.isFinite(value)
-    ? value
-    : 0;
-
-}
-
-
-function setBonus(amount) {
-
-  localStorage.setItem(
-    BONUS_KEY,
-    String(
-      Math.max(
-        0,
-        Number(amount) || 0
-      )
-    )
-  );
-
-}
-
-
-/* =========================================================
-   FORMATTERS
-========================================================= */
-
-function formatMoney(amount) {
-
-  const number =
-    Number(amount) || 0;
-
-  return new Intl.NumberFormat(
-    "en-NG",
-    {
-      style: "currency",
-      currency: "NGN",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }
-  ).format(number);
-
-}
-
-
-function formatDate(dateValue) {
-
-  if (!dateValue) {
-    return "";
-  }
-
-  const date =
-    new Date(
-      dateValue
-    );
-
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
-
-    return "";
-
-  }
-
-  return date.toLocaleString(
-    "en-NG",
-    {
-      dateStyle: "medium",
-      timeStyle: "short"
-    }
-  );
-
-}
-
 
 /* =========================================================
    LOADING
 ========================================================= */
 
-function showLoading(
-  message = "Processing..."
-) {
+function showLoading(message = "Please wait...") {
+  const overlay = $("loadingOverlay");
+  const text = $("loadingText");
 
-  const overlay =
-    $("loadingOverlay");
-
-  const text =
-    $("loadingText");
-
-
-  if (text) {
-
-    text.textContent =
-      message;
-
-  }
-
-
-  if (overlay) {
-
-    overlay.classList.remove(
-      "hidden"
-    );
-
-  }
-
+  if (text) text.textContent = message;
+  if (overlay) overlay.classList.add("active");
 }
-
 
 function hideLoading() {
-
-  const overlay =
-    $("loadingOverlay");
-
-  if (overlay) {
-
-    overlay.classList.add(
-      "hidden"
-    );
-
-  }
-
+  const overlay = $("loadingOverlay");
+  if (overlay) overlay.classList.remove("active");
 }
-
 
 /* =========================================================
    TOAST
 ========================================================= */
 
-function showToast(
-  message,
-  type = "success"
-) {
+function showToast(message, type = "info") {
+  const toast = $("toast");
+  const toastMessage = $("toastMessage");
+  const toastIcon = $("toastIcon");
 
-  const toast =
-    $("toast");
-
-  const icon =
-    $("toastIcon");
-
-  const messageElement =
-    $("toastMessage");
-
-
-  if (!toast) {
-
-    console.log(
-      `[${type}] ${message}`
-    );
-
-    return;
-
-  }
-
-
-  if (messageElement) {
-
-    messageElement.textContent =
-      message;
-
-  }
-
-
-  if (icon) {
-
-    icon.textContent =
-      type === "success"
-        ? "✓"
-        : "!";
-
-  }
-
-
-  toast.classList.remove(
-    "hidden"
-  );
-
-
-  clearTimeout(
-    toastTimer
-  );
-
-
-  toastTimer =
-    setTimeout(
-      () => {
-
-        toast.classList.add(
-          "hidden"
-        );
-
-      },
-      3500
-    );
-
-}
-
-
-/* =========================================================
-   FORM MESSAGES
-========================================================= */
-
-function setMessage(
-  element,
-  message,
-  type = "error"
-) {
-
-  if (!element) {
+  if (!toast || !toastMessage) {
+    console.log(message);
     return;
   }
 
+  toastMessage.textContent = message;
 
-  element.textContent =
-    message;
+  if (toastIcon) {
+    if (type === "success") {
+      toastIcon.textContent = "✓";
+    } else if (type === "error") {
+      toastIcon.textContent = "!";
+    } else {
+      toastIcon.textContent = "i";
+    }
+  }
 
+  toast.classList.add("show");
 
-  element.style.color =
-    type === "success"
-      ? "#159447"
-      : type === "warning"
-        ? "#9a6b00"
-        : "#dc3545";
+  clearTimeout(window.__toastTimer);
 
+  window.__toastTimer = setTimeout(() => {
+    toast.classList.remove("show");
+  }, 3500);
 }
-
 
 /* =========================================================
    MODALS
 ========================================================= */
 
 function openModal(id) {
-
-  const modal =
-    $(id);
-
-  if (!modal) {
-    return;
-  }
-
-  modal.classList.remove(
-    "hidden"
-  );
-
+  const modal = $(id);
+  if (modal) modal.classList.add("active");
 }
-
 
 function closeModal(id) {
+  const modal = $(id);
+  if (modal) modal.classList.remove("active");
+}
 
-  const modal =
-    $(id);
+window.closeModal = closeModal;
 
-  if (!modal) {
-    return;
+document.addEventListener("click", (event) => {
+  const closeButton = event.target.closest("[data-close-modal]");
+
+  if (closeButton) {
+    closeModal(closeButton.dataset.closeModal);
   }
 
-  modal.classList.add(
-    "hidden"
-  );
-
-}
-
-
-function closeAllModals() {
-
-  $all(".modal").forEach(
-    modal => {
-
-      modal.classList.add(
-        "hidden"
-      );
-
+  if (event.target.classList.contains("modal-overlay")) {
+    const modal = event.target.closest(".modal");
+    if (modal && modal.id) {
+      closeModal(modal.id);
     }
-  );
-
-}
-
+  }
+});
 
 /* =========================================================
    API REQUEST
 ========================================================= */
 
-async function apiRequest(
-  endpoint,
-  options = {}
-) {
-
+async function apiRequest(path, options = {}) {
   const headers = {
-
-    "Content-Type":
-      "application/json",
-
     ...(options.headers || {})
-
   };
 
-
-  if (authToken) {
-
-    headers.Authorization =
-      `Bearer ${authToken}`;
-
+  if (options.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
   }
 
+  const token = getToken();
 
-  const response =
-    await fetch(
-      `${API_BASE}${endpoint}`,
-      {
-        ...options,
-        headers
-      }
-    );
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
 
-
-  let data = null;
-
+  let response;
 
   try {
-
-    data =
-      await response.json();
-
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers
+    });
   } catch (error) {
-
-    data = null;
-
+    throw new Error(
+      "Cannot connect to SIH DATA SUB backend. Make sure the server is running on port 5100."
+    );
   }
 
+  let data = {};
+
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (response.status === 401) {
+    clearSession();
+    showAuthScreen();
+    throw new Error(data.message || "Your session has expired.");
+  }
 
   if (!response.ok) {
-
-    const error =
-      new Error(
-        data?.message ||
-        `Request failed (${response.status})`
-      );
-
-    error.status =
-      response.status;
-
-    throw error;
-
+    throw new Error(
+      data.message ||
+      data.error ||
+      `Request failed (${response.status})`
+    );
   }
-
 
   return data;
-
 }
-
 
 /* =========================================================
-   SERVER CHECK
+   SCREEN CONTROL
 ========================================================= */
 
-async function checkServer() {
+function showAuthScreen() {
+  const splash = $("splashScreen");
+  const auth = $("authScreen");
+  const main = $("mainScreen");
 
-  const status =
-    $("connectionStatus");
+  if (splash) splash.classList.remove("active");
+  if (main) main.classList.remove("active");
+  if (auth) auth.classList.add("active");
 
-
-  try {
-
-    const data =
-      await apiRequest(
-        "/api/health"
-      );
-
-
-    if (
-      data &&
-      data.success &&
-      data.server
-    ) {
-
-      if (status) {
-
-        status.textContent =
-          "Online";
-
-        status.style.background =
-          "#edf8f1";
-
-        status.style.color =
-          "#159447";
-
-      }
-
-      return true;
-
-    }
-
-
-    throw new Error(
-      "Server unavailable"
-    );
-
-
-  } catch (error) {
-
-    if (status) {
-
-      status.textContent =
-        "Offline";
-
-      status.style.background =
-        "#fff0f1";
-
-      status.style.color =
-        "#dc3545";
-
-    }
-
-    return false;
-
-  }
-
+  switchAuthTab("login");
 }
 
+function showMainScreen() {
+  const splash = $("splashScreen");
+  const auth = $("authScreen");
+  const main = $("mainScreen");
+
+  if (splash) splash.classList.remove("active");
+  if (auth) auth.classList.remove("active");
+  if (main) main.classList.add("active");
+
+  updateUserDisplay();
+  showPage("homePage");
+
+  loadDashboard();
+}
 
 /* =========================================================
    SPLASH
 ========================================================= */
 
 function startSplash() {
+  const splash = $("splashScreen");
+  const progress = $("splashProgress");
 
-  const progress =
-    $("splashProgress");
-
-
-  if (!progress) {
-
-    finishSplash();
-
+  if (!splash) {
+    initializeApp();
     return;
-
   }
 
+  splash.classList.add("active");
 
   let value = 0;
 
+  const timer = setInterval(() => {
+    value += 5;
 
-  clearInterval(
-    splashTimer
-  );
+    if (progress) {
+      progress.style.width = `${Math.min(value, 100)}%`;
+    }
 
+    if (value >= 100) {
+      clearInterval(timer);
 
-  splashTimer =
-    setInterval(
-      () => {
-
-        value +=
-          Math.floor(
-            Math.random() * 12
-          ) + 5;
-
-
-        if (value >= 100) {
-
-          value = 100;
-
-          clearInterval(
-            splashTimer
-          );
-
-        }
-
-
-        progress.style.width =
-          `${value}%`;
-
-
-        if (value >= 100) {
-
-          setTimeout(
-            finishSplash,
-            350
-          );
-
-        }
-
-      },
-      100
-    );
-
+      setTimeout(() => {
+        initializeApp();
+      }, 400);
+    }
+  }, 35);
 }
 
+/* =========================================================
+   CONNECTION CHECK
+========================================================= */
 
-function finishSplash() {
+async function checkConnection(showMessage = false) {
+  const status = $("connectionStatus");
 
-  const splash =
-    $("splashScreen");
-
-
-  if (splash) {
-
-    splash.classList.add(
-      "hidden"
-    );
-
+  if (status) {
+    status.textContent = "Connecting...";
+    status.classList.remove("connected", "disconnected");
   }
 
+  try {
+    const data = await apiRequest("/api/health");
 
-  loadSession();
+    if (status) {
+      status.textContent = "Connected";
+      status.classList.add("connected");
+      status.classList.remove("disconnected");
+    }
 
+    if (showMessage) {
+      showToast("Backend connected successfully.", "success");
+    }
 
-  if (
-    authToken &&
-    currentUser
-  ) {
+    return data;
+  } catch (error) {
+    if (status) {
+      status.textContent = "Not Connected";
+      status.classList.add("disconnected");
+      status.classList.remove("connected");
+    }
 
-    showMainApp();
+    if (showMessage) {
+      showToast(error.message, "error");
+    }
 
+    return null;
+  }
+}
+
+/* =========================================================
+   AUTH TABS
+========================================================= */
+
+function switchAuthTab(tab) {
+  const loginTab = $("loginTab");
+  const signupTab = $("signupTab");
+  const loginForm = $("loginForm");
+  const signupForm = $("signupForm");
+
+  if (tab === "signup") {
+    loginTab?.classList.remove("active");
+    signupTab?.classList.add("active");
+
+    loginForm?.classList.remove("active");
+    signupForm?.classList.add("active");
   } else {
+    signupTab?.classList.remove("active");
+    loginTab?.classList.add("active");
 
-    showAuth();
-
+    signupForm?.classList.remove("active");
+    loginForm?.classList.add("active");
   }
-
 }
 
+$("loginTab")?.addEventListener("click", () => {
+  switchAuthTab("login");
+});
 
-/* =========================================================
-   AUTH SCREEN
-========================================================= */
-
-function showAuth() {
-
-  const auth =
-    $("authScreen");
-
-  const main =
-    $("mainScreen");
-
-
-  if (auth) {
-
-    auth.classList.remove(
-      "hidden"
-    );
-
-  }
-
-
-  if (main) {
-
-    main.classList.add(
-      "hidden"
-    );
-
-  }
-
-}
-
-
-/* =========================================================
-   MAIN APP
-========================================================= */
-
-function showMainApp() {
-
-  const auth =
-    $("authScreen");
-
-  const main =
-    $("mainScreen");
-
-
-  if (auth) {
-
-    auth.classList.add(
-      "hidden"
-    );
-
-  }
-
-
-  if (main) {
-
-    main.classList.remove(
-      "hidden"
-    );
-
-  }
-
-
-  updateUserUI();
-
-  showPage(
-    "homePage"
-  );
-
-  loadWallet();
-
-  checkServer();
-
-  renderTransactions();
-
-}
-
-
-/* =========================================================
-   USER UI
-========================================================= */
-
-function updateUserUI() {
-
-  if (!currentUser) {
-    return;
-  }
-
-
-  const name =
-    currentUser.name ||
-    "User";
-
-  const email =
-    currentUser.email ||
-    "";
-
-
-  if ($("welcomeName")) {
-
-    $("welcomeName")
-      .textContent =
-      `Welcome, ${name}`;
-
-  }
-
-
-  if ($("profileName")) {
-
-    $("profileName")
-      .textContent =
-      name;
-
-  }
-
-
-  if ($("profileEmail")) {
-
-    $("profileEmail")
-      .textContent =
-      email;
-
-  }
-
-
-  const avatar =
-    document.querySelector(
-      ".profile-avatar"
-    );
-
-
-  if (avatar) {
-
-    avatar.textContent =
-      name
-        .trim()
-        .charAt(0)
-        .toUpperCase() || "U";
-
-  }
-
-}
-
+$("signupTab")?.addEventListener("click", () => {
+  switchAuthTab("signup");
+});
 
 /* =========================================================
    LOGIN
 ========================================================= */
 
-async function loginUser(
-  email,
-  password
-) {
+$("loginForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
 
-  email =
-    String(
-      email || ""
-    )
-      .trim()
-      .toLowerCase();
+  const email = $("loginEmail")?.value.trim();
+  const password = $("loginPassword")?.value || "";
+  const button = $("loginButton");
+  const message = $("loginMessage");
 
-  password =
-    String(
-      password || ""
-    );
-
-
-  if (!email) {
-
-    setMessage(
-      $("loginMessage"),
-      "Enter your email."
-    );
-
+  if (!email || !password) {
+    if (message) message.textContent = "Enter your email and password.";
     return;
-
   }
 
-
-  if (!password) {
-
-    setMessage(
-      $("loginMessage"),
-      "Enter your password."
-    );
-
-    return;
-
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Logging in...";
   }
 
-
-  showLoading(
-    "Signing you in..."
-  );
-
+  if (message) message.textContent = "";
 
   try {
+    const data = await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        password
+      })
+    });
 
-    const data =
-      await apiRequest(
-        "/api/auth/login",
-        {
-          method: "POST",
-
-          body:
-            JSON.stringify({
-              email,
-              password
-            })
-
-        }
-      );
-
-
-    if (
-      !data ||
-      !data.success ||
-      !data.token
-    ) {
-
-      throw new Error(
-        data?.message ||
-        "Login failed."
-      );
-
+    if (!data.success || !data.token) {
+      throw new Error(data.message || "Login failed.");
     }
 
+    saveSession(data.token, data.user);
 
-    authToken =
-      data.token;
+    if (message) {
+      message.textContent = "Login successful.";
+    }
 
-    currentUser =
-      data.user || null;
+    showToast("Welcome back!", "success");
 
-
-    saveSession(
-      authToken,
-      currentUser
-    );
-
-
-    $("loginForm")?.reset();
-
-
-    showToast(
-      "Login successful."
-    );
-
-
-    showMainApp();
-
+    setTimeout(() => {
+      showMainScreen();
+    }, 400);
 
   } catch (error) {
+    if (message) {
+      message.textContent = error.message;
+    }
 
-    console.error(
-      "LOGIN ERROR:",
-      error
-    );
-
-
-    setMessage(
-      $("loginMessage"),
-      error.message ||
-      "Unable to login."
-    );
+    showToast(error.message, "error");
 
   } finally {
-
-    hideLoading();
-
-  }
-
-}
-
-
-/* =========================================================
-   CREATE PHONE FIELD
-========================================================= */
-
-function createPhoneField() {
-
-  const form =
-    $("signupForm");
-
-
-  if (!form) {
-    return;
-  }
-
-
-  if ($("signupPhone")) {
-    return;
-  }
-
-
-  const nameInput =
-    $("signupName");
-
-
-  const wrapper =
-    document.createElement(
-      "div"
-    );
-
-
-  wrapper.className =
-    "form-group";
-
-
-  wrapper.innerHTML = `
-
-    <label
-      for="signupPhone"
-    >
-      Phone Number
-    </label>
-
-    <input
-      id="signupPhone"
-      type="tel"
-      inputmode="numeric"
-      autocomplete="tel"
-      maxlength="11"
-      placeholder="08012345678"
-    >
-
-  `;
-
-
-  if (
-    nameInput &&
-    nameInput.parentElement
-  ) {
-
-    nameInput.parentElement.after(
-      wrapper
-    );
-
-  } else {
-
-    form.prepend(
-      wrapper
-    );
-
-  }
-
-}
-
-
-/* =========================================================
-   PREPARE SIGNUP INTERFACE
-========================================================= */
-
-function prepareSignupInterface() {
-
-  const form =
-    $("signupForm");
-
-
-  if (!form) {
-    return;
-  }
-
-
-  createPhoneField();
-
-
-  const otp =
-    $("signupOtp");
-
-
-  /*
-    Hide OTP input at first.
-  */
-
-  if (otp) {
-
-    otp.style.display =
-      "none";
-
-    otp.value =
-      "";
-
-    otp.setAttribute(
-      "maxlength",
-      "6"
-    );
-
-    otp.setAttribute(
-      "inputmode",
-      "numeric"
-    );
-
-    otp.setAttribute(
-      "autocomplete",
-      "one-time-code"
-    );
-
-  }
-
-
-  /*
-    Hide the existing OTP label
-    until OTP has actually been sent.
-  */
-
-  if (otp) {
-
-    const otpParent =
-      otp.parentElement;
-
-
-    if (otpParent) {
-
-      const label =
-        otpParent.querySelector(
-          "label"
-        );
-
-
-      if (label) {
-
-        label.style.display =
-          "none";
-
-      }
-
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Login";
     }
-
   }
-
-
-  /*
-    Hide old Send OTP button.
-  */
-
-  const oldOtpButton =
-    $("sendOtpButton");
-
-
-  if (oldOtpButton) {
-
-    oldOtpButton.style.display =
-      "none";
-
-  }
-
-
-  /*
-    Create OTP information box.
-  */
-
-  let otpMessage =
-    $("signupOtpMessage");
-
-
-  if (!otpMessage) {
-
-    otpMessage =
-      document.createElement(
-        "div"
-      );
-
-    otpMessage.id =
-      "signupOtpMessage";
-
-
-    otpMessage.style.display =
-      "none";
-
-
-    otpMessage.style.margin =
-      "10px 0";
-
-
-    otpMessage.style.padding =
-      "12px";
-
-
-    otpMessage.style.borderRadius =
-      "10px";
-
-
-    otpMessage.style.background =
-      "#edf5ff";
-
-
-    otpMessage.style.color =
-      "#2864d7";
-
-
-    otpMessage.style.fontSize =
-      "14px";
-
-
-    if (otp) {
-
-      otp.parentElement?.before(
-        otpMessage
-      );
-
-    }
-
-  }
-
-
-  /*
-    Find the Sign Up button.
-  */
-
-  const buttons =
-    form.querySelectorAll(
-      "button"
-    );
-
-
-  let signupButton = null;
-
-
-  buttons.forEach(
-    button => {
-
-      const text =
-        button.textContent
-          .trim()
-          .toLowerCase();
-
-
-      if (
-        text.includes(
-          "sign up"
-        )
-      ) {
-
-        signupButton =
-          button;
-
-      }
-
-    }
-  );
-
-
-  /*
-    If no button was found,
-    use the last button.
-  */
-
-  if (
-    !signupButton &&
-    buttons.length
-  ) {
-
-    signupButton =
-      buttons[
-        buttons.length - 1
-      ];
-
-  }
-
-
-  if (signupButton) {
-
-    signupButton.type =
-      "button";
-
-
-    signupButton.id =
-      "signupSubmitButton";
-
-
-    signupButton.textContent =
-      "Sign Up";
-
-  }
-
-
-  /*
-    Password autocomplete.
-  */
-
-  if ($("signupPassword")) {
-
-    $("signupPassword")
-      .autocomplete =
-      "new-password";
-
-  }
-
-
-  if ($("signupPassword2")) {
-
-    $("signupPassword2")
-      .autocomplete =
-      "new-password";
-
-  }
-
-
-  if ($("signupEmail")) {
-
-    $("signupEmail")
-      .autocomplete =
-      "email";
-
-  }
-
-}
-
+});
 
 /* =========================================================
-   SIGNUP VALIDATION
+   SEND OTP
 ========================================================= */
 
-function getSignupData() {
+$("sendOtpButton")?.addEventListener("click", async () => {
+  const name = $("signupName")?.value.trim();
+  const phone = $("signupPhone")?.value.trim();
+  const email = $("signupEmail")?.value.trim();
+  const button = $("sendOtpButton");
+  const message = $("signupMessage");
 
-  return {
-
-    name:
-      $("signupName")?.value
-        .trim() || "",
-
-    phone:
-      $("signupPhone")?.value
-        .trim() || "",
-
-    email:
-      $("signupEmail")?.value
-        .trim()
-        .toLowerCase() || "",
-
-    password:
-      $("signupPassword")?.value || "",
-
-    password2:
-      $("signupPassword2")?.value || ""
-
-  };
-
-}
-
-
-/* =========================================================
-   SIGNUP
-========================================================= */
-
-async function signupUser() {
-
-  /*
-    If OTP has already been sent,
-    pressing the button means VERIFY.
-  */
-
-  if (signupWaitingForOTP) {
-
-    await verifySignupOTP();
-
+  if (!name) {
+    showToast("Enter your full name.", "error");
     return;
-
   }
 
-
-  const data =
-    getSignupData();
-
-
-  /* -------------------------------------------------------
-     NAME
-  ------------------------------------------------------- */
-
-  if (!data.name) {
-
-    setMessage(
-      $("signupMessage"),
-      "Enter your full name."
-    );
-
-    $("signupName")?.focus();
-
+  if (!phone) {
+    showToast("Enter your phone number.", "error");
     return;
-
   }
 
-
-  /* -------------------------------------------------------
-     PHONE
-  ------------------------------------------------------- */
-
-  if (
-    !/^0\d{10}$/.test(
-      data.phone
-    )
-  ) {
-
-    setMessage(
-      $("signupMessage"),
-      "Enter a valid 11-digit phone number."
-    );
-
-    $("signupPhone")?.focus();
-
+  if (!email) {
+    showToast("Enter your Gmail address.", "error");
     return;
-
   }
 
-
-  /* -------------------------------------------------------
-     EMAIL
-  ------------------------------------------------------- */
-
-  if (
-    !/^[^@\s]+@[^@\s]+\.[^@\s]+$/
-      .test(
-        data.email
-      )
-  ) {
-
-    setMessage(
-      $("signupMessage"),
-      "Enter a valid Gmail address."
-    );
-
-    $("signupEmail")?.focus();
-
-    return;
-
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Sending OTP...";
   }
 
-
-  /* -------------------------------------------------------
-     PASSWORD
-  ------------------------------------------------------- */
-
-  if (
-    data.password.length < 8
-  ) {
-
-    setMessage(
-      $("signupMessage"),
-      "Password must be at least 8 characters."
-    );
-
-    $("signupPassword")?.focus();
-
-    return;
-
-  }
-
-
-  /* -------------------------------------------------------
-     CONFIRM PASSWORD
-  ------------------------------------------------------- */
-
-  if (
-    data.password !==
-    data.password2
-  ) {
-
-    setMessage(
-      $("signupMessage"),
-      "Passwords do not match."
-    );
-
-    $("signupPassword2")?.focus();
-
-    return;
-
-  }
-
-
-  /* -------------------------------------------------------
-     SEND OTP
-  ------------------------------------------------------- */
-
-  showLoading(
-    "Sending OTP to your Gmail..."
-  );
-
+  if (message) message.textContent = "";
 
   try {
+    const data = await apiRequest("/api/auth/request-otp", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        phone,
+        email
+      })
+    });
 
-    const response =
-      await apiRequest(
-        "/api/auth/request-otp",
-        {
-          method: "POST",
-
-          body:
-            JSON.stringify({
-              name:
-                data.name,
-
-              email:
-                data.email,
-
-              phone:
-                data.phone
-            })
-
-        }
-      );
-
-
-    if (
-      !response ||
-      !response.success
-    ) {
-
-      throw new Error(
-        response?.message ||
-        "Unable to send OTP."
-      );
-
+    if (!data.success) {
+      throw new Error(data.message || "Could not send OTP.");
     }
 
-
-    /*
-      OTP is now waiting.
-    */
-
-    signupWaitingForOTP =
-      true;
-
-
-    /*
-      Show OTP input.
-    */
-
-    const otp =
-      $("signupOtp");
-
-
-    if (otp) {
-
-      otp.style.display =
-        "block";
-
-
-      otp.value =
-        "";
-
-
-      const otpParent =
-        otp.parentElement;
-
-
-      if (otpParent) {
-
-        const label =
-          otpParent.querySelector(
-            "label"
-          );
-
-
-        if (label) {
-
-          label.style.display =
-            "block";
-
-        }
-
-      }
-
-
-      otp.focus();
-
-    }
-
-
-    /*
-      Show OTP message.
-    */
-
-    const otpMessage =
-      $("signupOtpMessage");
-
-
-    if (otpMessage) {
-
-      otpMessage.style.display =
-        "block";
-
-
-      otpMessage.innerHTML = `
-
-        <strong>
-          OTP sent successfully
-        </strong>
-
-        <br>
-
-        Check your Gmail and enter
-        the 6-digit verification code.
-
-      `;
-
-    }
-
-
-    /*
-      Change button.
-    */
-
-    const button =
-      $("signupSubmitButton");
-
-
-    if (button) {
-
-      button.textContent =
-        "Verify OTP";
-
-    }
-
-
-    setMessage(
-      $("signupMessage"),
-      "OTP sent to your Gmail.",
+    showToast(
+      "OTP sent to your Gmail. Check your inbox.",
       "success"
     );
 
-
-    showToast(
-      "OTP sent to your Gmail."
-    );
-
-
-  } catch (error) {
-
-    console.error(
-      "SIGNUP OTP ERROR:",
-      error
-    );
-
-
-    setMessage(
-      $("signupMessage"),
-      error.message ||
-      "Unable to send OTP."
-    );
-
-  } finally {
-
-    hideLoading();
-
-  }
-
-}
-
-
-/* =========================================================
-   VERIFY OTP
-========================================================= */
-
-async function verifySignupOTP() {
-
-  if (!signupWaitingForOTP) {
-    return;
-  }
-
-
-  if (otpVerificationRunning) {
-    return;
-  }
-
-
-  const data =
-    getSignupData();
-
-
-  const otp =
-    $("signupOtp")?.value
-      .trim() || "";
-
-
-  if (
-    !/^\d{6}$/.test(
-      otp
-    )
-  ) {
-
-    showToast(
-      "Enter the complete 6-digit OTP.",
-      "warning"
-    );
-
-    $("signupOtp")?.focus();
-
-    return;
-
-  }
-
-
-  otpVerificationRunning =
-    true;
-
-
-  showLoading(
-    "Verifying OTP and creating your account..."
-  );
-
-
-  try {
-
-    const response =
-      await apiRequest(
-        "/api/auth/verify-otp",
-        {
-          method: "POST",
-
-          body:
-            JSON.stringify({
-
-              name:
-                data.name,
-
-              phone:
-                data.phone,
-
-              email:
-                data.email,
-
-              otp:
-                otp,
-
-              password:
-                data.password
-
-            })
-
-        }
-      );
-
-
-    if (
-      !response ||
-      !response.success ||
-      !response.token
-    ) {
-
-      throw new Error(
-        response?.message ||
-        "Unable to create account."
-      );
-
+    if (message) {
+      message.textContent =
+        "OTP sent successfully. Enter the 6-digit code.";
     }
 
+    const otpInput = $("signupOtp");
 
-    /*
-      ACCOUNT CREATED
-    */
+    if (otpInput) {
+      otpInput.focus();
+    }
 
-    signupWaitingForOTP =
-      false;
+    let seconds = 30;
 
+    if (button) {
+      button.textContent = `Resend OTP (${seconds}s)`;
 
-    authToken =
-      response.token;
+      const countdown = setInterval(() => {
+        seconds--;
 
+        if (seconds <= 0) {
+          clearInterval(countdown);
+          button.disabled = false;
+          button.textContent = "Send OTP";
+        } else {
+          button.textContent = `Resend OTP (${seconds}s)`;
+        }
+      }, 1000);
+    }
 
-    currentUser =
-      response.user || {
+  } catch (error) {
+    showToast(error.message, "error");
 
-        id:
-          "",
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Send OTP";
+    }
+  }
+});
 
-        name:
-          data.name,
+/* =========================================================
+   SIGNUP / VERIFY OTP
+========================================================= */
 
-        email:
-          data.email,
+$("signupForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
 
-        phone:
-          data.phone
+  const name = $("signupName")?.value.trim();
+  const phone = $("signupPhone")?.value.trim();
+  const email = $("signupEmail")?.value.trim();
+  const otp = $("signupOtp")?.value.trim();
+  const password = $("signupPassword")?.value || "";
+  const password2 = $("signupPassword2")?.value || "";
 
-      };
+  const button = $("signupButton");
+  const message = $("signupMessage");
 
+  if (!name) {
+    showToast("Enter your full name.", "error");
+    return;
+  }
 
-    /*
-      Keep phone in frontend session.
-    */
+  if (!phone) {
+    showToast("Enter your phone number.", "error");
+    return;
+  }
 
-    currentUser.phone =
-      currentUser.phone ||
-      data.phone;
+  if (!email) {
+    showToast("Enter your email.", "error");
+    return;
+  }
 
+  if (!/^\d{6}$/.test(otp)) {
+    showToast("Enter the 6-digit OTP.", "error");
+    return;
+  }
 
-    saveSession(
-      authToken,
-      currentUser
-    );
+  if (password.length < 8) {
+    showToast("Password must be at least 8 characters.", "error");
+    return;
+  }
 
+  if (password !== password2) {
+    showToast("Passwords do not match.", "error");
+    return;
+  }
 
-    /*
-      Success message.
-    */
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Creating account...";
+  }
 
-    setMessage(
-      $("signupMessage"),
+  if (message) message.textContent = "";
+
+  try {
+    const data = await apiRequest("/api/auth/verify-otp", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        phone,
+        email,
+        otp,
+        password
+      })
+    });
+
+    if (!data.success || !data.token) {
+      throw new Error(data.message || "Account creation failed.");
+    }
+
+    saveSession(data.token, data.user);
+
+    showToast(
       "Account created successfully!",
       "success"
     );
 
-
-    showToast(
-      "Account created successfully!"
-    );
-
-
-    /*
-      Reset signup interface.
-    */
-
-    $("signupForm")?.reset();
-
-
-    const otpInput =
-      $("signupOtp");
-
-
-    if (otpInput) {
-
-      otpInput.style.display =
-        "none";
-
+    if (message) {
+      message.textContent = "Account created successfully.";
     }
 
-
-    const otpParent =
-      otpInput?.parentElement;
-
-
-    if (otpParent) {
-
-      const label =
-        otpParent.querySelector(
-          "label"
-        );
-
-
-      if (label) {
-
-        label.style.display =
-          "none";
-
-      }
-
-    }
-
-
-    const otpMessage =
-      $("signupOtpMessage");
-
-
-    if (otpMessage) {
-
-      otpMessage.style.display =
-        "none";
-
-    }
-
-
-    const signupButton =
-      $("signupSubmitButton");
-
-
-    if (signupButton) {
-
-      signupButton.textContent =
-        "Sign Up";
-
-    }
-
-
-    /*
-      Open dashboard automatically.
-    */
-
-    setTimeout(
-      () => {
-
-        showMainApp();
-
-      },
-      700
-    );
-
+    setTimeout(() => {
+      showMainScreen();
+    }, 500);
 
   } catch (error) {
+    if (message) {
+      message.textContent = error.message;
+    }
 
-    console.error(
-      "OTP VERIFY ERROR:",
-      error
-    );
-
-
-    setMessage(
-      $("signupMessage"),
-      error.message ||
-      "Incorrect or expired OTP."
-    );
-
-
-    $("signupOtp")?.focus();
-
+    showToast(error.message, "error");
 
   } finally {
-
-    otpVerificationRunning =
-      false;
-
-    hideLoading();
-
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Create Account";
+    }
   }
-
-}
-
+});
 
 /* =========================================================
-   OTP INPUT
+   PASSWORD TOGGLES
 ========================================================= */
 
-function setupOTPInput() {
+document.querySelectorAll("[data-target]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const targetId = button.dataset.target;
+    const input = $(targetId);
 
-  const otp =
-    $("signupOtp");
+    if (!input) return;
 
+    if (input.type === "password") {
+      input.type = "text";
+      button.textContent = "Hide";
+    } else {
+      input.type = "password";
+      button.textContent = "Show";
+    }
+  });
+});
 
-  if (!otp) {
-    return;
+/* =========================================================
+   USER DISPLAY
+========================================================= */
+
+function updateUserDisplay() {
+  currentUser = getSavedUser();
+
+  if (!currentUser) return;
+
+  const name =
+    currentUser.name ||
+    currentUser.fullName ||
+    "User";
+
+  const welcome = $("welcomeName");
+  const profileName = $("profileName");
+  const profileEmail = $("profileEmail");
+
+  if (welcome) {
+    welcome.textContent = name;
   }
 
+  if (profileName) {
+    profileName.textContent = name;
+  }
 
-  otp.addEventListener(
-    "input",
-    () => {
-
-      otp.value =
-        otp.value
-          .replace(
-            /\D/g,
-            ""
-          )
-          .slice(
-            0,
-            6
-          );
-
-
-      /*
-        Automatically verify after
-        the sixth digit.
-      */
-
-      if (
-        otp.value.length === 6 &&
-        signupWaitingForOTP
-      ) {
-
-        verifySignupOTP();
-
-      }
-
-    }
-  );
-
+  if (profileEmail) {
+    profileEmail.textContent = currentUser.email || "";
+  }
 }
 
+/* =========================================================
+   DASHBOARD
+========================================================= */
+
+async function loadDashboard() {
+  updateUserDisplay();
+
+  await Promise.allSettled([
+    loadAccount(),
+    loadWallet(),
+    loadBonus(),
+    loadTransactions(),
+    loadConnection()
+  ]);
+}
+
+async function loadConnection() {
+  await checkConnection(false);
+}
+
+/* =========================================================
+   ACCOUNT
+========================================================= */
+
+async function loadAccount() {
+  try {
+    const data = await apiRequest("/api/account");
+
+    if (data.success && data.user) {
+      currentUser = data.user;
+      localStorage.setItem(
+        USER_KEY,
+        JSON.stringify(data.user)
+      );
+
+      updateUserDisplay();
+    }
+
+  } catch (error) {
+    console.warn("Account:", error.message);
+  }
+}
 
 /* =========================================================
    WALLET
 ========================================================= */
 
 async function loadWallet() {
-
-  if (!authToken) {
-    return;
-  }
-
-
   try {
+    const data = await apiRequest("/api/wallet");
 
-    const data =
-      await apiRequest(
-        "/api/wallet"
-      );
+    if (!data.success || !data.wallet) return;
 
+    const balance = Number(data.wallet.balance || 0);
 
-    if (
-      !data ||
-      !data.success ||
-      !data.wallet
-    ) {
+    const balanceElement = $("walletBalance");
 
-      throw new Error(
-        "Wallet data unavailable."
-      );
-
+    if (balanceElement) {
+      balanceElement.textContent =
+        `₦${balance.toLocaleString("en-NG", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })}`;
     }
 
+    const transactionWallet = $("transactionWallet");
 
-    const balance =
-      Number(
-        data.wallet.balance
-      ) || 0;
-
-
-    if ($("walletBalance")) {
-
-      $("walletBalance")
-        .textContent =
-        formatMoney(
-          balance
-        );
-
+    if (transactionWallet) {
+      transactionWallet.textContent =
+        `Wallet: ₦${balance.toLocaleString("en-NG", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })}`;
     }
-
-
-    if ($("transactionWallet")) {
-
-      $("transactionWallet")
-        .textContent =
-        formatMoney(
-          balance
-        );
-
-    }
-
-
-    if ($("bonusBalance")) {
-
-      $("bonusBalance")
-        .textContent =
-        formatMoney(
-          getBonus()
-        );
-
-    }
-
 
   } catch (error) {
-
-    console.error(
-      "WALLET ERROR:",
-      error
-    );
-
-
-    if (
-      error.status === 401
-    ) {
-
-      handleExpiredSession();
-
-    }
-
+    console.warn("Wallet:", error.message);
   }
-
 }
-
-
-/* =========================================================
-   EXPIRED SESSION
-========================================================= */
-
-function handleExpiredSession() {
-
-  clearSession();
-
-  closeAllModals();
-
-  showAuth();
-
-  showToast(
-    "Your session has expired.",
-    "warning"
-  );
-
-}
-
-
-/* =========================================================
-   NAVIGATION
-========================================================= */
-
-function showPage(
-  pageId
-) {
-
-  $all(".page").forEach(
-    page => {
-
-      page.classList.add(
-        "hidden"
-      );
-
-      page.classList.remove(
-        "active-page"
-      );
-
-    }
-  );
-
-
-  const selected =
-    $(pageId);
-
-
-  if (!selected) {
-    return;
-  }
-
-
-  selected.classList.remove(
-    "hidden"
-  );
-
-  selected.classList.add(
-    "active-page"
-  );
-
-
-  $all(".nav-item")
-    .forEach(
-      item => {
-
-        item.classList.toggle(
-          "active",
-          item.dataset.page ===
-          pageId
-        );
-
-      }
-    );
-
-
-  window.scrollTo({
-    top: 0,
-    behavior: "smooth"
-  });
-
-
-  if (
-    pageId ===
-    "transactionsPage"
-  ) {
-
-    renderTransactions();
-
-  }
-
-}
-
-
-/* =========================================================
-   TRANSACTIONS
-========================================================= */
-
-function renderTransactions() {
-
-  const transactions =
-    getTransactions();
-
-
-  if ($("transactionCount")) {
-
-    $("transactionCount")
-      .textContent =
-      transactions.length;
-
-  }
-
-
-  renderTransactionContainer(
-    $("recentTransactions"),
-    transactions.slice(
-      0,
-      5
-    )
-  );
-
-
-  renderTransactionContainer(
-    $("allTransactions"),
-    transactions
-  );
-
-}
-
-
-function renderTransactionContainer(
-  container,
-  transactions
-) {
-
-  if (!container) {
-    return;
-  }
-
-
-  if (!transactions.length) {
-
-    container.innerHTML = `
-
-      <div class="empty-state">
-
-        <div class="empty-icon">
-          🧾
-        </div>
-
-        <strong>
-          No transactions yet
-        </strong>
-
-        <p>
-          Your recent activity will appear here.
-        </p>
-
-      </div>
-
-    `;
-
-    return;
-
-  }
-
-
-  container.innerHTML =
-    transactions
-      .map(
-        transaction => {
-
-          const credit =
-            transaction.type ===
-            "credit";
-
-
-          return `
-
-            <div class="transaction-item">
-
-              <div class="transaction-icon">
-
-                ${
-                  escapeHTML(
-                    transaction.icon ||
-                    "🧾"
-                  )
-                }
-
-              </div>
-
-              <div class="transaction-details">
-
-                <strong>
-                  ${
-                    escapeHTML(
-                      transaction.title ||
-                      "Transaction"
-                    )
-                  }
-                </strong>
-
-                <small>
-                  ${
-                    escapeHTML(
-                      formatDate(
-                        transaction.date
-                      )
-                    )
-                  }
-                </small>
-
-              </div>
-
-              <div
-                class="transaction-amount ${
-                  credit
-                    ? "credit"
-                    : "debit"
-                }"
-              >
-
-                ${
-                  credit
-                    ? "+"
-                    : "-"
-                }${
-                  formatMoney(
-                    Math.abs(
-                      Number(
-                        transaction.amount
-                      ) || 0
-                    )
-                  )
-                }
-
-              </div>
-
-            </div>
-
-          `;
-
-        }
-      )
-      .join("");
-
-}
-
-
-/* =========================================================
-   ESCAPE HTML
-========================================================= */
-
-function escapeHTML(
-  value
-) {
-
-  return String(
-    value ?? ""
-  )
-    .replace(
-      /&/g,
-      "&amp;"
-    )
-    .replace(
-      /</g,
-      "&lt;"
-    )
-    .replace(
-      />/g,
-      "&gt;"
-    )
-    .replace(
-      /"/g,
-      "&quot;"
-    )
-    .replace(
-      /'/g,
-      "&#039;"
-    );
-
-}
-
-
-/* =========================================================
-   SERVICES
-========================================================= */
-
-const SERVICE_CONFIG = {
-
-  data: {
-    title: "Data",
-    icon: "📶",
-    description:
-      "Choose your network and data package."
-  },
-
-  airtime: {
-    title: "Airtime",
-    icon: "📱",
-    description:
-      "Recharge a mobile phone."
-  },
-
-  cable: {
-    title: "Cable TV",
-    icon: "📺",
-    description:
-      "Cable subscription service."
-  },
-
-  electricity: {
-    title: "Electricity",
-    icon: "⚡",
-    description:
-      "Electricity bill payment."
-  },
-
-  education: {
-    title: "Education PIN",
-    icon: "🎓",
-    description:
-      "Education PIN service."
-  },
-
-  bulksms: {
-    title: "Bulk SMS",
-    icon: "💬",
-    description:
-      "Bulk SMS service."
-  }
-
-};
-
-
-function openService(
-  service
-) {
-
-  const config =
-    SERVICE_CONFIG[
-      service
-    ];
-
-
-  if (!config) {
-    return;
-  }
-
-
-  currentService =
-    service;
-
-
-  if ($("serviceModalIcon")) {
-
-    $("serviceModalIcon")
-      .textContent =
-      config.icon;
-
-  }
-
-
-  if ($("serviceModalTitle")) {
-
-    $("serviceModalTitle")
-      .textContent =
-      config.title;
-
-  }
-
-
-  if ($("serviceModalDescription")) {
-
-    $("serviceModalDescription")
-      .textContent =
-      config.description;
-
-  }
-
-
-  renderServiceForm(
-    service
-  );
-
-
-  openModal(
-    "serviceModal"
-  );
-
-}
-
-
-function renderServiceForm(
-  service
-) {
-
-  const area =
-    $("serviceFormArea");
-
-
-  if (!area) {
-    return;
-  }
-
-
-  if (
-    service === "data"
-  ) {
-
-    area.innerHTML = `
-
-      <div class="form-group">
-
-        <label>
-          Network
-        </label>
-
-        <select id="dataNetwork">
-
-          <option value="">
-            Select network
-          </option>
-
-          <option value="MTN">
-            MTN
-          </option>
-
-          <option value="Airtel">
-            Airtel
-          </option>
-
-          <option value="Glo">
-            Glo
-          </option>
-
-          <option value="9mobile">
-            9mobile
-          </option>
-
-        </select>
-
-      </div>
-
-      <div class="form-group">
-
-        <label>
-          Phone Number
-        </label>
-
-        <input
-          id="dataPhone"
-          type="tel"
-          inputmode="numeric"
-          maxlength="11"
-          placeholder="08012345678"
-        >
-
-      </div>
-
-      <div class="form-group">
-
-        <label>
-          Data Plan
-        </label>
-
-        <select id="dataPlan">
-
-          <option value="">
-            Select plan
-          </option>
-
-          <option value="500MB">
-            500MB
-          </option>
-
-          <option value="1GB">
-            1GB
-          </option>
-
-          <option value="2GB">
-            2GB
-          </option>
-
-          <option value="5GB">
-            5GB
-          </option>
-
-        </select>
-
-      </div>
-
-      <button
-        class="primary-button"
-        type="button"
-        id="serviceActionButton"
-      >
-        Continue
-      </button>
-
-    `;
-
-  }
-
-
-  else if (
-    service === "airtime"
-  ) {
-
-    area.innerHTML = `
-
-      <div class="form-group">
-
-        <label>
-          Network
-        </label>
-
-        <select id="airtimeNetwork">
-
-          <option value="">
-            Select network
-          </option>
-
-          <option value="MTN">
-            MTN
-          </option>
-
-          <option value="Airtel">
-            Airtel
-          </option>
-
-          <option value="Glo">
-            Glo
-          </option>
-
-          <option value="9mobile">
-            9mobile
-          </option>
-
-        </select>
-
-      </div>
-
-      <div class="form-group">
-
-        <label>
-          Phone Number
-        </label>
-
-        <input
-          id="airtimePhone"
-          type="tel"
-          inputmode="numeric"
-          maxlength="11"
-          placeholder="08012345678"
-        >
-
-      </div>
-
-      <div class="form-group">
-
-        <label>
-          Amount
-        </label>
-
-        <input
-          id="airtimeAmount"
-          type="number"
-          min="50"
-          placeholder="Enter amount"
-        >
-
-      </div>
-
-      <button
-        class="primary-button"
-        type="button"
-        id="serviceActionButton"
-      >
-        Continue
-      </button>
-
-    `;
-
-  }
-
-
-  else {
-
-    const config =
-      SERVICE_CONFIG[
-        service
-      ];
-
-
-    area.innerHTML = `
-
-      <div class="empty-state">
-
-        <div class="empty-icon">
-          ${
-            escapeHTML(
-              config?.icon ||
-              "⚡"
-            )
-          }
-        </div>
-
-        <strong>
-          ${
-            escapeHTML(
-              config?.title ||
-              "Service"
-            )
-          }
-        </strong>
-
-        <p>
-          This service interface is ready.
-          Secure provider connection will be
-          added before real transactions are enabled.
-        </p>
-
-      </div>
-
-      <button
-        class="primary-button"
-        type="button"
-        id="serviceActionButton"
-      >
-        Close
-      </button>
-
-    `;
-
-  }
-
-
-  const action =
-    $("serviceActionButton");
-
-
-  if (action) {
-
-    action.addEventListener(
-      "click",
-      handleServiceAction
-    );
-
-  }
-
-}
-
-
-function handleServiceAction() {
-
-  if (
-    currentService ===
-    "data"
-  ) {
-
-    const network =
-      $("dataNetwork")?.value;
-
-    const phone =
-      $("dataPhone")?.value
-        .trim();
-
-    const plan =
-      $("dataPlan")?.value;
-
-
-    if (!network) {
-
-      showToast(
-        "Select a network.",
-        "warning"
-      );
-
-      return;
-
-    }
-
-
-    if (
-      !/^0\d{10}$/.test(
-        phone || ""
-      )
-    ) {
-
-      showToast(
-        "Enter a valid 11-digit phone number.",
-        "warning"
-      );
-
-      return;
-
-    }
-
-
-    if (!plan) {
-
-      showToast(
-        "Select a data plan.",
-        "warning"
-      );
-
-      return;
-
-    }
-
-
-    showToast(
-      "Data provider is not connected yet.",
-      "warning"
-    );
-
-    return;
-
-  }
-
-
-  if (
-    currentService ===
-    "airtime"
-  ) {
-
-    const network =
-      $("airtimeNetwork")?.value;
-
-    const phone =
-      $("airtimePhone")?.value
-        .trim();
-
-    const amount =
-      Number(
-        $("airtimeAmount")?.value
-      );
-
-
-    if (!network) {
-
-      showToast(
-        "Select a network.",
-        "warning"
-      );
-
-      return;
-
-    }
-
-
-    if (
-      !/^0\d{10}$/.test(
-        phone || ""
-      )
-    ) {
-
-      showToast(
-        "Enter a valid 11-digit phone number.",
-        "warning"
-      );
-
-      return;
-
-    }
-
-
-    if (
-      !Number.isFinite(amount) ||
-      amount < 50
-    ) {
-
-      showToast(
-        "Enter a valid amount.",
-        "warning"
-      );
-
-      return;
-
-    }
-
-
-    showToast(
-      "Airtime provider is not connected yet.",
-      "warning"
-    );
-
-    return;
-
-  }
-
-
-  closeModal(
-    "serviceModal"
-  );
-
-}
-
-
-/* =========================================================
-   FUND WALLET
-========================================================= */
-
-function openFundWallet() {
-
-  if ($("fundAmount")) {
-
-    $("fundAmount")
-      .value = "";
-
-  }
-
-
-  openModal(
-    "fundWalletModal"
-  );
-
-}
-
-
-function selectQuickAmount(
-  amount
-) {
-
-  if ($("fundAmount")) {
-
-    $("fundAmount")
-      .value =
-      amount;
-
-  }
-
-}
-
-
-function continueFunding() {
-
-  const amount =
-    Number(
-      $("fundAmount")?.value
-    );
-
-
-  if (
-    !Number.isFinite(amount) ||
-    amount < 100
-  ) {
-
-    showToast(
-      "Enter an amount of at least ₦100.",
-      "warning"
-    );
-
-    return;
-
-  }
-
-
-  closeModal(
-    "fundWalletModal"
-  );
-
-
-  showToast(
-    "Payment gateway is not connected yet.",
-    "warning"
-  );
-
-}
-
 
 /* =========================================================
    BONUS
 ========================================================= */
 
-function redeemBonus() {
+async function loadBonus() {
+  try {
+    const data = await apiRequest("/api/bonus");
 
-  if (
-    getBonus() <= 0
-  ) {
+    if (!data.success || !data.bonus) return;
 
-    showToast(
-      "You have no bonus available.",
-      "warning"
-    );
+    const balance = Number(data.bonus.balance || 0);
 
-    return;
+    const bonusElement = $("bonusBalance");
 
+    if (bonusElement) {
+      bonusElement.textContent =
+        `₦${balance.toLocaleString("en-NG", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })}`;
+    }
+
+  } catch (error) {
+    console.warn("Bonus:", error.message);
   }
-
-
-  showToast(
-    "Bonus redemption will be enabled when the wallet system is finalized.",
-    "warning"
-  );
-
 }
 
+/* =========================================================
+   TRANSACTIONS
+========================================================= */
+
+async function loadTransactions() {
+  try {
+    const data = await apiRequest(
+      "/api/transactions?limit=50"
+    );
+
+    const transactions = data.transactions || [];
+
+    renderRecentTransactions(transactions);
+    renderAllTransactions(transactions);
+
+  } catch (error) {
+    console.warn("Transactions:", error.message);
+
+    renderRecentTransactions([]);
+    renderAllTransactions([]);
+  }
+}
+
+function formatMoney(amount) {
+  return `₦${Number(amount || 0).toLocaleString("en-NG", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+function formatDate(dateValue) {
+  if (!dateValue) return "";
+
+  const date = new Date(dateValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(dateValue);
+  }
+
+  return date.toLocaleString("en-NG", {
+    dateStyle: "medium",
+    timeStyle: "short"
+  });
+}
+
+function transactionTitle(transaction) {
+  return (
+    transaction.description ||
+    transaction.service ||
+    transaction.type ||
+    "Transaction"
+  );
+}
+
+function renderRecentTransactions(transactions) {
+  const container = $("recentTransactions");
+
+  if (!container) return;
+
+  const recent = transactions.slice(0, 5);
+
+  if (!recent.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div>No transactions yet</div>
+        <small>Your transactions will appear here.</small>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = recent.map((tx) => {
+    const amount = Number(tx.amount || 0);
+    const positive =
+      tx.type === "credit" ||
+      tx.type === "funding" ||
+      tx.status === "credited";
+
+    return `
+      <div class="transaction-item">
+        <div>
+          <strong>${escapeHTML(transactionTitle(tx))}</strong>
+          <small>${escapeHTML(formatDate(tx.createdAt))}</small>
+        </div>
+
+        <div>
+          <strong class="${positive ? "credit" : "debit"}">
+            ${positive ? "+" : "-"}${formatMoney(Math.abs(amount))}
+          </strong>
+
+          <small>${escapeHTML(tx.status || "")}</small>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderAllTransactions(transactions) {
+  const container = $("allTransactions");
+  const count = $("transactionCount");
+
+  if (count) {
+    count.textContent = transactions.length;
+  }
+
+  if (!container) return;
+
+  if (!transactions.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div>No transactions yet</div>
+        <small>Your transaction history will appear here.</small>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = transactions.map((tx) => {
+    const amount = Number(tx.amount || 0);
+
+    return `
+      <div class="transaction-item">
+        <div>
+          <strong>${escapeHTML(transactionTitle(tx))}</strong>
+          <small>
+            ${escapeHTML(formatDate(tx.createdAt))}
+          </small>
+          ${
+            tx.reference
+              ? `<small>Ref: ${escapeHTML(tx.reference)}</small>`
+              : ""
+          }
+        </div>
+
+        <div>
+          <strong>
+            ${formatMoney(amount)}
+          </strong>
+
+          <small>
+            ${escapeHTML(tx.status || "unknown")}
+          </small>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+/* =========================================================
+   NAVIGATION
+========================================================= */
+
+function showPage(pageId) {
+  const pages = document.querySelectorAll(".page");
+
+  pages.forEach((page) => {
+    page.classList.remove("active");
+  });
+
+  const target = $(pageId);
+
+  if (target) {
+    target.classList.add("active");
+  }
+
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.classList.remove("active");
+
+    if (item.dataset.page === pageId) {
+      item.classList.add("active");
+    }
+  });
+
+  if (pageId === "transactionsPage") {
+    loadTransactions();
+  }
+
+  if (pageId === "accountPage") {
+    loadAccount();
+  }
+
+  if (pageId === "homePage") {
+    loadDashboard();
+  }
+}
+
+document.querySelectorAll(".nav-item").forEach((item) => {
+  item.addEventListener("click", () => {
+    const page = item.dataset.page;
+
+    if (page) {
+      showPage(page);
+    }
+  });
+});
+
+$("viewTransactionsButton")?.addEventListener("click", () => {
+  showPage("transactionsPage");
+});
+
+$("viewAllServices")?.addEventListener("click", () => {
+  showPage("servicesPage");
+});
+
+/* =========================================================
+   FUND WALLET
+========================================================= */
+
+$("fundWalletButton")?.addEventListener("click", () => {
+  const amountInput = $("fundAmount");
+
+  if (amountInput) {
+    amountInput.value = "";
+  }
+
+  openModal("fundWalletModal");
+});
+
+document.querySelectorAll(".quick-amount").forEach((button) => {
+  button.addEventListener("click", () => {
+    const amount = button.dataset.amount;
+
+    const input = $("fundAmount");
+
+    if (input) {
+      input.value = amount || "";
+    }
+  });
+});
+
+$("continueFundingButton")?.addEventListener("click", async () => {
+  const input = $("fundAmount");
+
+  const amount = Number(
+    input?.value?.replace(/,/g, "") || 0
+  );
+
+  if (!Number.isFinite(amount) || amount < 100) {
+    showToast("Minimum funding amount is ₦100.", "error");
+    return;
+  }
+
+  if (amount > 1000000) {
+    showToast("Maximum funding amount is ₦1,000,000.", "error");
+    return;
+  }
+
+  const button = $("continueFundingButton");
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Creating request...";
+  }
+
+  try {
+    /* First get the official quote */
+    const quoteData = await apiRequest(
+      "/api/funding/quote",
+      {
+        method: "POST",
+        body: JSON.stringify({ amount })
+      }
+    );
+
+    if (!quoteData.success || !quoteData.quote) {
+      throw new Error(
+        quoteData.message || "Unable to create funding quote."
+      );
+    }
+
+    const quote = quoteData.quote;
+
+    const confirmed = window.confirm(
+      `Funding summary\n\n` +
+      `Wallet credit: ${formatMoney(quote.walletCredit)}\n` +
+      `Fee: ${formatMoney(quote.fee)}\n` +
+      `Total to pay: ${formatMoney(quote.totalToPay)}\n\n` +
+      `Continue?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    /* Create pending funding request */
+    const createData = await apiRequest(
+      "/api/funding/create",
+      {
+        method: "POST",
+        body: JSON.stringify({ amount })
+      }
+    );
+
+    if (!createData.success) {
+      throw new Error(
+        createData.message ||
+        "Could not create funding request."
+      );
+    }
+
+    closeModal("fundWalletModal");
+
+    showToast(
+      "Funding request created. Wallet is not credited yet.",
+      "success"
+    );
+
+    showInfo(
+      "Funding Pending",
+      `
+        <p>Your funding request has been created.</p>
+        <p><strong>Wallet credit:</strong> ${formatMoney(quote.walletCredit)}</p>
+        <p><strong>Fee:</strong> ${formatMoney(quote.fee)}</p>
+        <p><strong>Total:</strong> ${formatMoney(quote.totalToPay)}</p>
+        <p>
+          Payment provider integration is still pending,
+          so your wallet balance has not been increased.
+        </p>
+      `,
+      "💳"
+    );
+
+  } catch (error) {
+    showToast(error.message, "error");
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Continue";
+    }
+  }
+});
+
+/* =========================================================
+   BONUS
+========================================================= */
+
+$("redeemBonusButton")?.addEventListener("click", () => {
+  showInfo(
+    "Bonus",
+    `
+      <p>Your current bonus balance is shown on the dashboard.</p>
+      <p>
+        Bonus redemption is not enabled in the current backend yet.
+      </p>
+    `,
+    "🎁"
+  );
+});
+
+/* =========================================================
+   SERVICES
+========================================================= */
+
+const serviceNames = {
+  data: {
+    title: "Data",
+    icon: "📶",
+    description: "Buy mobile data bundles."
+  },
+
+  airtime: {
+    title: "Airtime",
+    icon: "📱",
+    description: "Buy airtime for supported networks."
+  },
+
+  cable: {
+    title: "Cable TV",
+    icon: "📺",
+    description: "Pay your cable TV subscription."
+  },
+
+  electricity: {
+    title: "Electricity",
+    icon: "💡",
+    description: "Pay electricity bills."
+  },
+
+  education: {
+    title: "Education",
+    icon: "🎓",
+    description: "Purchase supported education PINs."
+  },
+
+  bulksms: {
+    title: "Bulk SMS",
+    icon: "💬",
+    description: "Send bulk SMS when the provider is connected."
+  }
+};
+
+function openService(service) {
+  currentService = service;
+
+  const info = serviceNames[service] || {
+    title: "Service",
+    icon: "⚡",
+    description: "SIH DATA SUB service."
+  };
+
+  const icon = $("serviceModalIcon");
+  const title = $("serviceModalTitle");
+  const description = $("serviceModalDescription");
+  const formArea = $("serviceFormArea");
+
+  if (icon) icon.textContent = info.icon;
+  if (title) title.textContent = info.title;
+  if (description) description.textContent = info.description;
+
+  if (formArea) {
+    formArea.innerHTML = `
+      <div class="service-status-box">
+        <div style="font-size:40px;">${info.icon}</div>
+        <h3>${escapeHTML(info.title)}</h3>
+        <p>
+          This service requires a verified VTU/provider
+          connection before purchases can be processed.
+        </p>
+
+        <button
+          type="button"
+          id="checkServiceButton"
+          class="primary-button"
+        >
+          Check Service Status
+        </button>
+      </div>
+    `;
+
+    $("checkServiceButton")?.addEventListener(
+      "click",
+      () => checkServiceStatus(service)
+    );
+  }
+
+  openModal("serviceModal");
+}
+
+window.openService = openService;
+
+document.querySelectorAll(
+  ".service-card, .full-service-card"
+).forEach((card) => {
+  card.addEventListener("click", () => {
+    const service = card.dataset.service;
+
+    if (service) {
+      openService(service);
+    }
+  });
+});
+
+async function checkServiceStatus(service) {
+  showLoading("Checking service...");
+
+  try {
+    const data = await apiRequest("/api/services");
+
+    const services = data.services || [];
+
+    const found = services.find(
+      (item) => item.service === service
+    );
+
+    if (!found) {
+      throw new Error("Service information not found.");
+    }
+
+    if (found.available) {
+      showToast(
+        `${serviceNames[service]?.title || service} is available.`,
+        "success"
+      );
+    } else {
+      showInfo(
+        serviceNames[service]?.title || "Service",
+        `
+          <p><strong>Status:</strong> ${escapeHTML(
+            found.status || "Provider required"
+          )}</p>
+          <p>
+            This service cannot process real purchases until
+            the VTU provider is connected to SIH DATA SUB.
+          </p>
+        `,
+        serviceNames[service]?.icon || "⚡"
+      );
+    }
+
+  } catch (error) {
+    showToast(error.message, "error");
+
+  } finally {
+    hideLoading();
+  }
+}
 
 /* =========================================================
    NOTIFICATIONS
 ========================================================= */
 
-function openNotifications() {
+$("notificationButton")?.addEventListener("click", async () => {
+  openModal("notificationModal");
 
-  openModal(
-    "notificationModal"
-  );
+  const content = $("notificationContent");
 
-}
+  if (!content) return;
 
+  content.innerHTML = `
+    <p>Checking system status...</p>
+  `;
 
-function clearNotificationBadge() {
+  try {
+    const health = await apiRequest("/api/health");
 
-  const badge =
-    $("notificationBadge");
+    content.innerHTML = `
+      <div class="notification-item">
+        <strong>Backend</strong>
+        <span>Connected ✓</span>
+      </div>
 
+      <div class="notification-item">
+        <strong>Gmail OTP</strong>
+        <span>
+          ${
+            health.gmailReady
+              ? "Ready ✓"
+              : "Not Ready"
+          }
+        </span>
+      </div>
 
-  if (badge) {
+      <div class="notification-item">
+        <strong>Payment Provider</strong>
+        <span>
+          ${
+            health.paymentProvider === "CONNECTED"
+              ? "Connected ✓"
+              : "Pending"
+          }
+        </span>
+      </div>
 
-    badge.classList.add(
-      "hidden"
-    );
+      <div class="notification-item">
+        <strong>VTU Provider</strong>
+        <span>
+          ${
+            health.vtuProvider === "CONNECTED"
+              ? "Connected ✓"
+              : "Pending"
+          }
+        </span>
+      </div>
+    `;
 
+  } catch (error) {
+    content.innerHTML = `
+      <p>${escapeHTML(error.message)}</p>
+    `;
+  }
+});
+
+/* =========================================================
+   INFO MODAL
+========================================================= */
+
+function showInfo(title, content, icon = "ℹ️") {
+  const modalIcon = $("infoModalIcon");
+  const modalTitle = $("infoModalTitle");
+  const modalContent = $("infoModalContent");
+
+  if (modalIcon) modalIcon.textContent = icon;
+  if (modalTitle) modalTitle.textContent = title;
+
+  if (modalContent) {
+    modalContent.innerHTML = content;
   }
 
+  openModal("infoModal");
 }
 
+window.showInfo = showInfo;
 
 /* =========================================================
    PROFILE
 ========================================================= */
 
-function showProfileInfo() {
+$("profileButton")?.addEventListener("click", async () => {
+  try {
+    const data = await apiRequest("/api/account");
 
-  const name =
-    currentUser?.name ||
-    "User";
+    const user = data.user || currentUser || {};
 
-  const email =
-    currentUser?.email ||
-    "";
+    showInfo(
+      "My Profile",
+      `
+        <p>
+          <strong>Name:</strong>
+          ${escapeHTML(user.name || "")}
+        </p>
 
-  const phone =
-    currentUser?.phone ||
-    "Not available";
+        <p>
+          <strong>Email:</strong>
+          ${escapeHTML(user.email || "")}
+        </p>
 
+        <p>
+          <strong>Phone:</strong>
+          ${escapeHTML(user.phone || "")}
+        </p>
+      `,
+      "👤"
+    );
 
-  if ($("infoModalIcon")) {
-
-    $("infoModalIcon")
-      .textContent =
-      "👤";
-
+  } catch (error) {
+    showToast(error.message, "error");
   }
-
-
-  if ($("infoModalTitle")) {
-
-    $("infoModalTitle")
-      .textContent =
-      "Profile";
-
-  }
-
-
-  if ($("infoModalContent")) {
-
-    $("infoModalContent")
-      .innerHTML = `
-
-        <strong>
-          Name
-        </strong>
-
-        <br>
-
-        ${escapeHTML(name)}
-
-        <br><br>
-
-        <strong>
-          Phone
-        </strong>
-
-        <br>
-
-        ${escapeHTML(phone)}
-
-        <br><br>
-
-        <strong>
-          Email
-        </strong>
-
-        <br>
-
-        ${escapeHTML(email)}
-
-      `;
-
-  }
-
-
-  openModal(
-    "infoModal"
-  );
-
-}
-
+});
 
 /* =========================================================
    SECURITY
 ========================================================= */
 
-function showSecurityInfo() {
+$("securityButton")?.addEventListener("click", () => {
+  showInfo(
+    "Security",
+    `
+      <p>
+        Your account uses JWT authentication.
+      </p>
 
-  if ($("infoModalIcon")) {
+      <p>
+        Your password is stored on the backend using
+        password hashing.
+      </p>
 
-    $("infoModalIcon")
-      .textContent =
-      "🔐";
-
-  }
-
-
-  if ($("infoModalTitle")) {
-
-    $("infoModalTitle")
-      .textContent =
-      "Security";
-
-  }
-
-
-  if ($("infoModalContent")) {
-
-    $("infoModalContent")
-      .innerHTML = `
-
-        Your password is protected
-        by the SIH DATA SUB backend.
-
-        <br><br>
-
-        Your login session uses
-        secure authentication.
-
-        <br><br>
-
-        Never share your password,
-        OTP or private credentials
-        with anyone.
-
-      `;
-
-  }
-
-
-  openModal(
-    "infoModal"
+      <p>
+        Never share your password or OTP with another person.
+      </p>
+    `,
+    "🔐"
   );
-
-}
-
+});
 
 /* =========================================================
    SUPPORT
 ========================================================= */
 
-function showSupportInfo() {
+$("supportButton")?.addEventListener("click", () => {
+  showInfo(
+    "Support",
+    `
+      <p>
+        SIH DATA SUB support information will be connected here.
+      </p>
 
-  if ($("infoModalIcon")) {
-
-    $("infoModalIcon")
-      .textContent =
-      "💬";
-
-  }
-
-
-  if ($("infoModalTitle")) {
-
-    $("infoModalTitle")
-      .textContent =
-      "Help & Support";
-
-  }
-
-
-  if ($("infoModalContent")) {
-
-    $("infoModalContent")
-      .innerHTML = `
-
-        <strong>
-          SIH DATA SUB Support
-        </strong>
-
-        <br><br>
-
-        Official support contact
-        information can be added
-        when your support channel
-        is ready.
-
-      `;
-
-  }
-
-
-  openModal(
-    "infoModal"
+      <p>
+        For now, make sure your backend server is running
+        before reporting a connection problem.
+      </p>
+    `,
+    "🎧"
   );
-
-}
-
+});
 
 /* =========================================================
    ABOUT
 ========================================================= */
 
-function showAboutInfo() {
+$("aboutButton")?.addEventListener("click", async () => {
+  try {
+    const health = await apiRequest("/api/health");
 
-  if ($("infoModalIcon")) {
+    showInfo(
+      "About SIH DATA SUB",
+      `
+        <p>
+          <strong>App:</strong>
+          ${escapeHTML(health.app || "SIH DATA SUB")}
+        </p>
 
-    $("infoModalIcon")
-      .textContent =
-      "ℹ️";
+        <p>
+          <strong>Backend version:</strong>
+          ${escapeHTML(health.version || "Unknown")}
+        </p>
 
+        <p>
+          SIH DATA SUB is a VTU-style platform for
+          data, airtime, bills and other digital services.
+        </p>
+      `,
+      "ℹ️"
+    );
+
+  } catch (error) {
+    showInfo(
+      "About SIH DATA SUB",
+      `
+        <p>SIH DATA SUB</p>
+        <p>Backend connection unavailable.</p>
+      `,
+      "ℹ️"
+    );
   }
-
-
-  if ($("infoModalTitle")) {
-
-    $("infoModalTitle")
-      .textContent =
-      "About SIH DATA SUB";
-
-  }
-
-
-  if ($("infoModalContent")) {
-
-    $("infoModalContent")
-      .innerHTML = `
-
-        <strong>
-          SIH DATA SUB
-        </strong>
-
-        <br>
-
-        Fast • Secure • Reliable
-
-        <br><br>
-
-        A platform being developed
-        for data, airtime, bills and
-        other VTU services.
-
-      `;
-
-  }
-
-
-  openModal(
-    "infoModal"
-  );
-
-}
-
+});
 
 /* =========================================================
    LOGOUT
 ========================================================= */
 
-function logoutUser() {
+$("logoutButton")?.addEventListener("click", async () => {
+  const confirmed = window.confirm(
+    "Do you want to logout?"
+  );
 
-  const confirmed =
-    window.confirm(
-      "Are you sure you want to logout?"
-    );
+  if (!confirmed) return;
 
-
-  if (!confirmed) {
-    return;
+  try {
+    if (getToken()) {
+      await apiRequest("/api/auth/logout", {
+        method: "POST"
+      });
+    }
+  } catch (error) {
+    console.warn("Logout:", error.message);
   }
-
 
   clearSession();
 
-  closeAllModals();
+  showToast("Logged out successfully.", "success");
 
-  showAuth();
-
-  showToast(
-    "You have been logged out."
-  );
-
-}
-
+  setTimeout(() => {
+    showAuthScreen();
+  }, 300);
+});
 
 /* =========================================================
-   PASSWORD SHOW / HIDE
+   SERVICE PURCHASE FUNCTION
+   This intentionally does NOT fake a successful purchase.
 ========================================================= */
 
-function setupPasswordToggles() {
-
-  $all(
-    ".password-toggle"
-  ).forEach(
-    button => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          const target =
-            $(button.dataset.target);
-
-
-          if (!target) {
-            return;
-          }
-
-
-          const showing =
-            target.type ===
-            "text";
-
-
-          target.type =
-            showing
-              ? "password"
-              : "text";
-
-
-          button.textContent =
-            showing
-              ? "Show"
-              : "Hide";
-
-        }
-      );
-
-    }
-  );
-
-}
-
-
-/* =========================================================
-   AUTH TABS
-========================================================= */
-
-function showLoginTab() {
-
-  $("loginTab")
-    ?.classList.add(
-      "active"
-    );
-
-  $("signupTab")
-    ?.classList.remove(
-      "active"
-    );
-
-  $("loginForm")
-    ?.classList.remove(
-      "hidden"
-    );
-
-  $("signupForm")
-    ?.classList.add(
-      "hidden"
-    );
-
-}
-
-
-function showSignupTab() {
-
-  $("signupTab")
-    ?.classList.add(
-      "active"
-    );
-
-  $("loginTab")
-    ?.classList.remove(
-      "active"
-    );
-
-  $("signupForm")
-    ?.classList.remove(
-      "hidden"
-    );
-
-  $("loginForm")
-    ?.classList.add(
-      "hidden"
-    );
-
-}
-
-
-/* =========================================================
-   SIGNUP BUTTON DIRECT HANDLER
-========================================================= */
-
-function setupSignupButton() {
-
-  const form =
-    $("signupForm");
-
-
-  if (!form) {
-    return;
-  }
-
-
-  const button =
-    $("signupSubmitButton");
-
-
-  if (!button) {
-    return;
-  }
-
-
-  button.addEventListener(
-    "click",
-    event => {
-
-      event.preventDefault();
-
-      signupUser();
-
-    }
-  );
-
-}
-
-
-/* =========================================================
-   EVENTS
-========================================================= */
-
-function setupEvents() {
-
-  /* LOGIN TAB */
-
-  on(
-    "loginTab",
-    "click",
-    showLoginTab
-  );
-
-
-  /* SIGNUP TAB */
-
-  on(
-    "signupTab",
-    "click",
-    showSignupTab
-  );
-
-
-  /* LOGIN */
-
-  on(
-    "loginForm",
-    "submit",
-    event => {
-
-      event.preventDefault();
-
-      loginUser(
-        $("loginEmail")?.value,
-        $("loginPassword")?.value
-      );
-
-    }
-  );
-
-
-  /*
-    SIGNUP FORM
-    We handle the button directly,
-    but also keep submit working.
-  */
-
-  on(
-    "signupForm",
-    "submit",
-    event => {
-
-      event.preventDefault();
-
-      signupUser();
-
-    }
-  );
-
-
-  /* NAVIGATION */
-
-  $all(
-    ".nav-item"
-  ).forEach(
-    item => {
-
-      item.addEventListener(
-        "click",
-        () => {
-
-          if (
-            item.dataset.page
-          ) {
-
-            showPage(
-              item.dataset.page
-            );
-
-          }
-
-        }
-      );
-
-    }
-  );
-
-
-  /* SERVICES */
-
-  $all(
-    "[data-service]"
-  ).forEach(
-    button => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          openService(
-            button.dataset.service
-          );
-
-        }
-      );
-
-    }
-  );
-
-
-  /* FUND */
-
-  on(
-    "fundWalletButton",
-    "click",
-    openFundWallet
-  );
-
-
-  /* BONUS */
-
-  on(
-    "redeemBonusButton",
-    "click",
-    redeemBonus
-  );
-
-
-  /* FUND CONTINUE */
-
-  on(
-    "continueFundingButton",
-    "click",
-    continueFunding
-  );
-
-
-  /* QUICK AMOUNTS */
-
-  $all(
-    ".quick-amount"
-  ).forEach(
-    button => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          selectQuickAmount(
-            Number(
-              button.dataset.amount
-            )
-          );
-
-        }
-      );
-
-    }
-  );
-
-
-  /* SERVICES PAGE */
-
-  on(
-    "viewAllServices",
-    "click",
-    () => {
-
-      showPage(
-        "servicesPage"
-      );
-
-    }
-  );
-
-
-  /* TRANSACTIONS */
-
-  on(
-    "viewTransactionsButton",
-    "click",
-    () => {
-
-      showPage(
-        "transactionsPage"
-      );
-
-    }
-  );
-
-
-  /* NOTIFICATIONS */
-
-  on(
-    "notificationButton",
-    "click",
-    openNotifications
-  );
-
-
-  /* PROFILE */
-
-  on(
-    "profileButton",
-    "click",
-    showProfileInfo
-  );
-
-
-  /* SECURITY */
-
-  on(
-    "securityButton",
-    "click",
-    showSecurityInfo
-  );
-
-
-  /* SUPPORT */
-
-  on(
-    "supportButton",
-    "click",
-    showSupportInfo
-  );
-
-
-  /* ABOUT */
-
-  on(
-    "aboutButton",
-    "click",
-    showAboutInfo
-  );
-
-
-  /* LOGOUT */
-
-  on(
-    "logoutButton",
-    "click",
-    logoutUser
-  );
-
-
-  /* CLOSE MODALS */
-
-  $all(
-    "[data-close-modal]"
-  ).forEach(
-    button => {
-
-      button.addEventListener(
-        "click",
-        () => {
-
-          closeModal(
-            button.dataset.closeModal
-          );
-
-        }
-      );
-
-    }
-  );
-
-
-  /* ESC KEY */
-
-  document.addEventListener(
-    "keydown",
-    event => {
-
-      if (
-        event.key ===
-        "Escape"
-      ) {
-
-        closeAllModals();
-
+async function processService(service, payload = {}) {
+  try {
+    const data = await apiRequest(
+      "/api/services/purchase",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          service,
+          ...payload
+        })
       }
+    );
 
+    if (data.success) {
+      showToast(
+        "Service purchase successful.",
+        "success"
+      );
+
+      await loadWallet();
+      await loadTransactions();
+
+      return data;
     }
-  );
 
+    throw new Error(
+      data.message || "Purchase failed."
+    );
 
-  /* PASSWORD BUTTONS */
-
-  setupPasswordToggles();
-
+  } catch (error) {
+    showToast(error.message, "error");
+    throw error;
+  }
 }
 
+window.processService = processService;
 
 /* =========================================================
-   APPLICATION START
+   INITIALIZATION
 ========================================================= */
 
-document.addEventListener(
-  "DOMContentLoaded",
-  () => {
+async function initializeApp() {
+  const token = getToken();
 
-    /*
-      First prepare the new
-      signup interface.
-    */
+  currentUser = getSavedUser();
 
-    prepareSignupInterface();
+  /* Always test backend connection */
+  await checkConnection(false);
 
+  if (token) {
+    try {
+      await apiRequest("/api/account");
 
-    /*
-      Then connect the buttons.
-    */
+      showMainScreen();
 
-    setupEvents();
+    } catch (error) {
+      clearSession();
+      showAuthScreen();
+    }
 
-
-    /*
-      Direct Sign Up button.
-    */
-
-    setupSignupButton();
-
-
-    /*
-      OTP automatic verification.
-    */
-
-    setupOTPInput();
-
-
-    /*
-      Start application.
-    */
-
-    startSplash();
-
+  } else {
+    showAuthScreen();
   }
-);
-
+}
 
 /* =========================================================
-   GLOBAL FUNCTIONS
+   AUTO REFRESH
 ========================================================= */
 
-window.loginUser =
-  loginUser;
+setInterval(() => {
+  if (getToken()) {
+    loadWallet();
+    loadBonus();
+  }
+}, 30000);
 
-window.signupUser =
-  signupUser;
+/* =========================================================
+   START APP
+========================================================= */
 
-window.verifySignupOTP =
-  verifySignupOTP;
-
-window.showAuth =
-  showAuth;
-
-window.showMainApp =
-  showMainApp;
-
-window.showPage =
-  showPage;
-
-window.openModal =
-  openModal;
-
-window.closeModal =
-  closeModal;
-
-window.closeAllModals =
-  closeAllModals;
-
-window.openService =
-  openService;
-
-window.openFundWallet =
-  openFundWallet;
-
-window.selectQuickAmount =
-  selectQuickAmount;
-
-window.continueFunding =
-  continueFunding;
-
-window.redeemBonus =
-  redeemBonus;
-
-window.openNotifications =
-  openNotifications;
-
-window.showProfileInfo =
-  showProfileInfo;
-
-window.showSecurityInfo =
-  showSecurityInfo;
-
-window.showSupportInfo =
-  showSupportInfo;
-
-window.showAboutInfo =
-  showAboutInfo;
-
-window.logoutUser =
-  logoutUser;
-
-window.loadWallet =
-  loadWallet;
-
-window.checkServer =
-  checkServer;
+document.addEventListener("DOMContentLoaded", () => {
+  startSplash();
+});

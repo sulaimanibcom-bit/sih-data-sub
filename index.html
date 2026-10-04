@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+  <meta name="theme-color" content="#102b57">
+  <meta name="description" content="SIH DATA SUB - Fast, Secure and Reliable VTU Services">
+
+  <title>SIH DATA SUB</title>
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<!-- =====================================================
+     LOADING SCREEN
+===================================================== -->
+<div id="loadingScreen" class="screen loading-screen">
+  <div class="loading-logo">
+    <div class="logo-circle">SD</div>
+  </div>
+
+  <h1>SIH DATA SUB</h1>
+  <p>Fast • Secure • Reliable</p>
+
+  <div class="loader"></div>
+</div>
+
+
+<!-- =====================================================
+     AUTH SCREEN
+===================================================== -->
+<div id="authScreen" class="screen auth-screen hidden">
+
+  <div class="auth-logo">
+    <div class="logo-circle">SD</div>
+    <h1>SIH DATA SUB</h1>
+    <p>VTU Services</p>
+  </div>
+
+
+  <!-- LOGIN -->
+  <div id="loginBox" class="auth-box">
+
+    <h2>Welcome Back</h2>
+    <p class="auth-subtitle">
+      Login to continue to your account
+    </p>
+
+    <form id="loginForm">
+
+      <label>Email</label>
+      <input
+        id="loginEmail"
+        type="email"
+        placeholder="Enter your email"
+        autocomplete="email"
+        required
+      >
+
+      <label>Password</label>
+
+      <div class="password-field">
+        <input
+          id="loginPassword"
+          type="password"
+          placeholder="Enter your password"
+          autocomplete="current-password"
+          required
+        >
+
+        <button
+          type="button"
+          class="show-password"
+          onclick="togglePassword('loginPassword', this)"
+        >
+          👁
+        </button>
+      </div>
+
+      <button
+        type="submit"
+        id="loginButton"
+        class="primary-button"
+      >
+        Login
+      </button>
+
+    </form>
+
+    <button
+      class="link-button"
+      onclick="showForgotPassword()"
+    >
+      Forgot Password?
+    </button>
+
+    <p class="switch-text">
+      Don't have an account?
+      <button onclick="showSignup()">Create Account</button>
+    </p>
+
+  </div>
+
+
+  <!-- SIGNUP -->
+  <div id="signupBox" class="auth-box hidden">
+
+    <h2>Create Account</h2>
+
+    <p class="auth-subtitle">
+      Create your SIH DATA SUB account
+    </p>
+
+    <form id="signupForm">
+
+      <label>Full Name</label>
+      <input
+        id="signupName"
+        type="text"
+        placeholder="Enter your full name"
+        autocomplete="name"
+        required
+      >
+
+      <label>Phone Number</label>
+      <input
+        id="signupPhone"
+        type="tel"
+        placeholder="08012345678"
+        autocomplete="tel"
+        required
+      >
+
+      <label>Gmail / Email</label>
+
+      <div class="otp-row">
+
+        <input
+          id="signupEmail"
+          type="email"
+          placeholder="yourname@gmail.com"
+          autocomplete="email"
+          required
+        >
+
+        <button
+          type="button"
+          id="sendOtpButton"
+          onclick="sendSignupOTP()"
+        >
+          Send OTP
+        </button>
+
+      </div>
+
+      <label>OTP</label>
+
+      <input
+        id="signupOtp"
+        type="text"
+        inputmode="numeric"
+        maxlength="6"
+        placeholder="6-digit OTP"
+        autocomplete="one-time-code"
+      >
+
+      <label>Password</label>
+
+      <div class="password-field">
+
+        <input
+          id="signupPassword"
+          type="password"
+          placeholder="Create password"
+          autocomplete="new-password"
+          required
+        >
+
+        <button
+          type="button"
+          class="show-password"
+          onclick="togglePassword('signupPassword', this)"
+        >
+          👁
+        </button>
+
+      </div>
+
+      <label>Confirm Password</label>
+
+      <div class="password-field">
+
+        <input
+          id="signupConfirmPassword"
+          type="password"
+          placeholder="Confirm password"
+          autocomplete="new-password"
+          required
+        >
+
+        <button
+          type="button"
+          class="show-password"
+          onclick="togglePassword('signupConfirmPassword', this)"
+        >
+          👁
+        </button>
+
+      </div>
+
+      <button
+        type="submit"
+        id="signupButton"
+        class="primary-button"
+      >
+        Create Account
+      </button>
+
+    </form>
+
+    <p class="switch-text">
+      Already have an account?
+      <button onclick="showLogin()">Login</button>
+    </p>
+
+  </div>
+
+
+  <!-- FORGOT PASSWORD -->
+  <div id="forgotBox" class="auth-box hidden">
+
+    <h2>Reset Password</h2>
+
+    <p class="auth-subtitle">
+      Enter your email to receive a reset OTP
+    </p>
+
+    <form id="forgotForm">
+
+      <label>Email</label>
+
+      <input
+        id="forgotEmail"
+        type="email"
+        placeholder="Enter your Gmail"
+        required
+      >
+
+      <button
+        type="submit"
+        id="forgotButton"
+        class="primary-button"
+      >
+        Send Reset OTP
+      </button>
+
+    </form>
+
+
+    <div id="resetPasswordBox" class="hidden">
+
+      <label>Reset OTP</label>
+
+      <input
+        id="resetOtp"
+        type="text"
+        inputmode="numeric"
+        maxlength="6"
+        placeholder="6-digit OTP"
+      >
+
+      <label>New Password</label>
+
+      <div class="password-field">
+
+        <input
+          id="newPassword"
+          type="password"
+          placeholder="New password"
+        >
+
+        <button
+          type="button"
+          class="show-password"
+          onclick="togglePassword('newPassword', this)"
+        >
+          👁
+        </button>
+
+      </div>
+
+      <label>Confirm New Password</label>
+
+      <input
+        id="confirmNewPassword"
+        type="password"
+        placeholder="Confirm new password"
+      >
+
+      <button
+        type="button"
+        class="primary-button"
+        onclick="resetPassword()"
+      >
+        Reset Password
+      </button>
+
+    </div>
+
+
+    <button
+      class="link-button"
+      onclick="showLogin()"
+    >
+      ← Back to Login
+    </button>
+
+  </div>
+
+</div>
+
+
+<!-- =====================================================
+     MAIN APPLICATION
+===================================================== -->
+<div id="mainScreen" class="main-screen hidden">
+
+
+  <!-- HEADER -->
+  <header class="app-header">
+
+    <div class="brand">
+
+      <div class="small-logo">SD</div>
+
+      <div>
+        <strong>SIH DATA SUB</strong>
+        <span>VTU Services</span>
+      </div>
+
+    </div>
+
+    <button
+      class="notification-button"
+      onclick="showNotifications()"
+    >
+      🔔
+    </button>
+
+  </header>
+
+
+  <!-- HOME -->
+  <main id="homePage" class="page">
+
+
+    <!-- WELCOME -->
+    <section class="welcome-card">
+
+      <div>
+
+        <p>Welcome back</p>
+
+        <h2 id="userName">
+          User
+        </h2>
+
+      </div>
+
+      <div class="user-initial" id="userInitial">
+        U
+      </div>
+
+    </section>
+
+
+    <!-- WALLET -->
+    <section class="wallet-card">
+
+      <div class="wallet-top">
+
+        <div>
+          <span>Wallet Balance</span>
+
+          <h1 id="walletBalance">
+            ₦0.00
+          </h1>
+        </div>
+
+        <button
+          onclick="loadWallet()"
+          class="refresh-button"
+        >
+          ↻
+        </button>
+
+      </div>
+
+
+      <div class="wallet-actions">
+
+        <button onclick="openFundWallet()">
+          <span>＋</span>
+          Fund Wallet
+        </button>
+
+        <button onclick="showBonus()">
+          <span>🎁</span>
+          Bonus
+        </button>
+
+      </div>
+
+    </section>
+
+
+    <!-- CONNECTION STATUS -->
+    <div
+      id="connectionStatus"
+      class="connection-status"
+    >
+      Checking connection...
+    </div>
+
+
+    <!-- SERVICES -->
+    <section class="section">
+
+      <div class="section-title">
+
+        <h3>Services</h3>
+
+        <span>
+          Fast & Secure
+        </span>
+
+      </div>
+
+
+      <div class="services-grid">
+
+
+        <button
+          class="service-card"
+          onclick="openData()"
+        >
+
+          <div class="service-icon">
+            📶
+          </div>
+
+          <strong>Data</strong>
+
+          <small>
+            Buy Data
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openAirtime()"
+        >
+
+          <div class="service-icon">
+            📱
+          </div>
+
+          <strong>Airtime</strong>
+
+          <small>
+            Recharge
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openCable()"
+        >
+
+          <div class="service-icon">
+            📺
+          </div>
+
+          <strong>Cable TV</strong>
+
+          <small>
+            Pay TV
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openElectricity()"
+        >
+
+          <div class="service-icon">
+            ⚡
+          </div>
+
+          <strong>Electricity</strong>
+
+          <small>
+            Pay Bills
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openEduPin()"
+        >
+
+          <div class="service-icon">
+            🎓
+          </div>
+
+          <strong>Edu PIN</strong>
+
+          <small>
+            Coming Soon
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openBulkSMS()"
+        >
+
+          <div class="service-icon">
+            💬
+          </div>
+
+          <strong>Bulk SMS</strong>
+
+          <small>
+            Coming Soon
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openRechargePin()"
+        >
+
+          <div class="service-icon">
+            🔑
+          </div>
+
+          <strong>Recharge PIN</strong>
+
+          <small>
+            Airtime PIN
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openDataPin()"
+        >
+
+          <div class="service-icon">
+            🎟️
+          </div>
+
+          <strong>Data PIN</strong>
+
+          <small>
+            Data PIN
+          </small>
+
+        </button>
+
+
+        <button
+          class="service-card"
+          onclick="openAirtimeSwap()"
+        >
+
+          <div class="service-icon">
+            🔄
+          </div>
+
+          <strong>Airtime Swap</strong>
+
+          <small>
+            Coming Soon
+          </small>
+
+        </button>
+
+      </div>
+
+    </section>
+
+
+    <!-- TRANSACTIONS -->
+    <section class="section">
+
+      <div class="section-title">
+
+        <h3>Recent Transactions</h3>
+
+        <button
+          onclick="openHistory()"
+          class="see-all"
+        >
+          See All
+        </button>
+
+      </div>
+
+      <div id="recentTransactions">
+
+        <div class="empty-state">
+          No transactions yet
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+
+  <!-- HISTORY -->
+  <main id="historyPage" class="page hidden">
+
+    <div class="page-title">
+
+      <button
+        onclick="showPage('homePage')"
+        class="back-button"
+      >
+        ←
+      </button>
+
+      <h2>Transaction History</h2>
+
+    </div>
+
+    <div id="historyList">
+
+      <div class="empty-state">
+        No transactions yet
+      </div>
+
+    </div>
+
+  </main>
+
+
+  <!-- ACCOUNT -->
+  <main id="accountPage" class="page hidden">
+
+    <div class="page-title">
+
+      <h2>Account</h2>
+
+    </div>
+
+
+    <section class="profile-card">
+
+      <div
+        class="profile-avatar"
+        id="profileInitial"
+      >
+        U
+      </div>
+
+      <div>
+
+        <h3 id="profileName">
+          User
+        </h3>
+
+        <p id="profileEmail">
+          email
+        </p>
+
+      </div>
+
+    </section>
+
+
+    <div class="account-menu">
+
+      <button onclick="showSecurity()">
+        🔐
+        <span>Security</span>
+        <b>›</b>
+      </button>
+
+      <button onclick="showSupport()">
+        💬
+        <span>Support</span>
+        <b>›</b>
+      </button>
+
+      <button onclick="showAbout()">
+        ℹ️
+        <span>About SIH DATA SUB</span>
+        <b>›</b>
+      </button>
+
+      <button
+        class="logout-item"
+        onclick="logout()"
+      >
+        🚪
+        <span>Logout</span>
+        <b>›</b>
+      </button>
+
+    </div>
+
+  </main>
+
+
+  <!-- BOTTOM NAV -->
+  <nav class="bottom-nav">
+
+    <button
+      id="navHome"
+      class="active"
+      onclick="showPage('homePage', this)"
+    >
+      <span>⌂</span>
+      <small>Home</small>
+    </button>
+
+    <button
+      id="navServices"
+      onclick="scrollToServices()"
+    >
+      <span>▦</span>
+      <small>Services</small>
+    </button>
+
+    <button
+      id="navHistory"
+      onclick="openHistory()"
+    >
+      <span>↔</span>
+      <small>History</small>
+    </button>
+
+    <button
+      id="navAccount"
+      onclick="showPage('accountPage', this)"
+    >
+      <span>♙</span>
+      <small>Account</small>
+    </button>
+
+  </nav>
+
+</div>
+
+
+<!-- =====================================================
+     SERVICE MODAL
+===================================================== -->
+<div
+  id="serviceModal"
+  class="modal hidden"
+>
+
+  <div class="modal-box">
+
+    <div class="modal-header">
+
+      <h2 id="modalTitle">
+        Service
+      </h2>
+
+      <button onclick="closeModal()">
+        ×
+      </button>
+
+    </div>
+
+    <div id="modalBody"></div>
+
+  </div>
+
+</div>
+
+
+<!-- =====================================================
+     FUND WALLET MODAL
+===================================================== -->
+<div
+  id="fundWalletModal"
+  class="modal hidden"
+>
+
+  <div class="modal-box">
+
+    <div class="modal-header">
+
+      <h2>Fund Wallet</h2>
+
+      <button onclick="closeFundWallet()">
+        ×
+      </button>
+
+    </div>
+
+
+    <div class="fund-info">
+
+      <div class="fund-icon">
+        💳
+      </div>
+
+      <h3>Add Money to Wallet</h3>
+
+      <p>
+        Enter the amount you want to add to your SIH DATA SUB wallet.
+      </p>
+
+    </div>
+
+
+    <label>Amount</label>
+
+    <input
+      id="fundAmount"
+      type="number"
+      min="100"
+      placeholder="₦1,000"
+    >
+
+
+    <button
+      class="primary-button"
+      onclick="fundWallet()"
+    >
+      Continue
+    </button>
+
+  </div>
+
+</div>
+
+
+<!-- =====================================================
+     TOAST
+===================================================== -->
+<div
+  id="toast"
+  class="toast"
+></div>
+
+
+<!-- =====================================================
+     GLOBAL LOADING
+===================================================== -->
+<div
+  id="actionLoading"
+  class="action-loading hidden"
+>
+
+  <div class="loading-box">
+
+    <div class="loader"></div>
+
+    <p id="loadingText">
+      Please wait...
+    </p>
+
+  </div>
+
+</div>
+
+
+<script src="app.js"></script>
+
+</body>
+</html>
