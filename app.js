@@ -22,10 +22,7 @@
    CONFIG
 ========================================================= */
 
-const API_BASE =
-  location.port === "5100"
-    ? ""
-    : "http://localhost:5100";
+const API_BASE = "https://sih-data-sub.onrender.com";
 
 const TOKEN_KEY = "sih_data_sub_token";
 const USER_KEY = "sih_data_sub_user";
