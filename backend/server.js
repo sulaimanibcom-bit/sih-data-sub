@@ -36,14 +36,11 @@ app.use(express.urlencoded({ extended: true }));
 
 const DATA_DIR = __dirname;
 
-const USERS_FILE =
-  path.join(DATA_DIR, "users.json");
-
-const WALLETS_FILE =
-  path.join(DATA_DIR, "wallets.json");
-
-const TRANSACTIONS_FILE =
-  path.join(DATA_DIR, "transactions.json");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+const WALLETS_FILE = path.join(DATA_DIR, "wallets.json");
+const TRANSACTIONS_FILE = path.join(DATA_DIR, "transactions.json");
+const FUNDING_FILE = path.join(DATA_DIR, "funding.json");
+const NOTIFICATIONS_FILE = path.join(DATA_DIR, "notifications.json");
 
 function ensureFile(file, defaultValue) {
   if (!fs.existsSync(file)) {
@@ -57,20 +54,19 @@ function ensureFile(file, defaultValue) {
 ensureFile(USERS_FILE, []);
 ensureFile(WALLETS_FILE, []);
 ensureFile(TRANSACTIONS_FILE, []);
+ensureFile(FUNDING_FILE, []);
+ensureFile(NOTIFICATIONS_FILE, []);
 
 function readJSON(file, fallback) {
   try {
-    const raw =
-      fs.readFileSync(file, "utf8");
+    const raw = fs.readFileSync(file, "utf8");
 
     if (!raw.trim()) {
       return fallback;
     }
 
     return JSON.parse(raw);
-
   } catch (error) {
-
     console.error(
       "JSON read error:",
       file,
@@ -94,35 +90,51 @@ function writeJSON(file, data) {
 
 const otpStore = new Map();
 
+const passwordResetStore = new Map();
+
 /* =========================================================
    EMAIL
 ========================================================= */
 
-let mailTransporter = null;
+ let mailTransporter = null;
 
 if (
   process.env.GMAIL_USER &&
   process.env.GMAIL_APP_PASSWORD
 ) {
-  mailTransporter =
-    nodemailer.createTransport({
-      service: "gmail",
+  mailTransporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.GMAIL_USER.trim(),
+      pass: process.env.GMAIL_APP_PASSWORD.replace(/\s/g, "")
+    },
+    connectionTimeout: 20000,
+    greetingTimeout: 20000,
+    socketTimeout: 30000
+  });
 
-      auth: {
-        user:
-          process.env.GMAIL_USER,
-
-        pass:
-          process.env.GMAIL_APP_PASSWORD
-      }
+  mailTransporter.verify()
+    .then(() => {
+      console.log("GMAIL SMTP: READY");
+    })
+    .catch((error) => {
+      console.error(
+        "GMAIL SMTP CONNECTION ERROR:",
+        error.code || "UNKNOWN",
+        error.message
+      );
     });
+} else {
+  console.error(
+    "GMAIL SMTP NOT CONFIGURED: Check environment variable names."
+  );
 }
 
-async function sendOTPEmail(
-  email,
-  name,
-  otp
-) {
+async function sendMail({
+  to,
+  subject,
+  text
+}) {
   if (!mailTransporter) {
     throw new Error(
       "Gmail SMTP is not configured."
@@ -132,7 +144,18 @@ async function sendOTPEmail(
   await mailTransporter.sendMail({
     from:
       `"SIH DATA SUB" <${process.env.GMAIL_USER}>`,
+    to,
+    subject,
+    text
+  });
+}
 
+async function sendOTPEmail(
+  email,
+  name,
+  otp
+) {
+  await sendMail({
     to: email,
 
     subject:
@@ -142,6 +165,26 @@ async function sendOTPEmail(
       `Hello ${name || "User"},\n\n` +
       `Your SIH DATA SUB verification code is: ${otp}\n\n` +
       `This code expires in 10 minutes.\n\n` +
+      `SIH DATA SUB`
+  });
+}
+
+async function sendPasswordResetEmail(
+  email,
+  name,
+  otp
+) {
+  await sendMail({
+    to: email,
+
+    subject:
+      "SIH DATA SUB Password Reset Code",
+
+    text:
+      `Hello ${name || "User"},\n\n` +
+      `Your SIH DATA SUB password reset code is: ${otp}\n\n` +
+      `This code expires in 10 minutes.\n\n` +
+      `If you did not request this, you can ignore this email.\n\n` +
       `SIH DATA SUB`
   });
 }
@@ -156,9 +199,7 @@ function makeId(prefix = "TX") {
     "_" +
     Date.now() +
     "_" +
-    crypto
-      .randomBytes(4)
-      .toString("hex")
+    crypto.randomBytes(4).toString("hex")
   );
 }
 
@@ -175,13 +216,11 @@ function normalizePhone(phone) {
 }
 
 function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    .test(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function isValidPhone(phone) {
-  return /^(\+234|234|0)\d{10}$/
-    .test(phone);
+  return /^(\+234|234|0)\d{10}$/.test(phone);
 }
 
 function numberValue(value) {
@@ -195,9 +234,7 @@ function numberValue(value) {
 }
 
 function providerConfigured() {
-  return Boolean(
-    VTUPLUG_API_KEY
-  );
+  return Boolean(VTUPLUG_API_KEY);
 }
 
 function providerHeaders() {
@@ -211,31 +248,25 @@ function providerHeaders() {
 }
 
 /* =========================================================
-   VTUPLUG REQUEST
+   PROVIDER REQUESTS
 ========================================================= */
 
 async function vtuGet(endpoint) {
-
   if (!providerConfigured()) {
     throw new Error(
-      "VTUPLUG_API_KEY is not configured."
+      "VTUPLUG API is not configured yet."
     );
   }
 
   const url =
     `${VTUPLUG_BASE_URL}${endpoint}`;
 
-  console.log(
-    "VTUPLUG GET:",
-    endpoint
-  );
+  console.log("VTUPLUG GET:", endpoint);
 
   const response =
     await fetch(url, {
       method: "GET",
-
-      headers:
-        providerHeaders()
+      headers: providerHeaders()
     });
 
   const text =
@@ -248,25 +279,15 @@ async function vtuGet(endpoint) {
   } catch {
     data = {
       status: "fail",
-
       message:
         text ||
-        "Invalid provider response"
+        "Invalid provider response."
     };
   }
 
-  console.log(
-    "VTUPLUG GET STATUS:",
-    response.status
-  );
-
   return {
-    httpStatus:
-      response.status,
-
-    ok:
-      response.ok,
-
+    httpStatus: response.status,
+    ok: response.ok,
     data
   };
 }
@@ -275,10 +296,9 @@ async function vtuPost(
   endpoint,
   payload
 ) {
-
   if (!providerConfigured()) {
     throw new Error(
-      "VTUPLUG_API_KEY is not configured."
+      "VTUPLUG API is not configured yet."
     );
   }
 
@@ -311,35 +331,20 @@ async function vtuPost(
   } catch {
     data = {
       status: "fail",
-
       message:
         text ||
-        "Invalid provider response"
+        "Invalid provider response."
     };
   }
 
-  console.log(
-    "VTUPLUG POST STATUS:",
-    response.status
-  );
-
   return {
-    httpStatus:
-      response.status,
-
-    ok:
-      response.ok,
-
+    httpStatus: response.status,
+    ok: response.ok,
     data
   };
 }
 
-/* =========================================================
-   PROVIDER RESPONSE HELPERS
-========================================================= */
-
 function providerSuccess(result) {
-
   if (!result) {
     return false;
   }
@@ -349,9 +354,9 @@ function providerSuccess(result) {
 
   const status =
     String(
-      data.status ||
-      data.Status ||
-      data.success ||
+      data.status ??
+      data.Status ??
+      data.success ??
       ""
     ).toLowerCase();
 
@@ -366,7 +371,6 @@ function providerSuccess(result) {
 }
 
 function providerMessage(result) {
-
   const data =
     result?.data || {};
 
@@ -379,22 +383,7 @@ function providerMessage(result) {
   );
 }
 
-/*
- * IMPORTANT:
- *
- * VTUPLUG may return HTTP 401/403 when its own
- * API key is invalid or unavailable.
- *
- * We MUST NOT forward that 401/403 to the frontend
- * as our application's authentication status.
- *
- * Our own JWT authentication continues to use 401.
- *
- * Provider failures are converted to 502.
- */
-
 function providerHttpStatus(result) {
-
   if (!result) {
     return 502;
   }
@@ -415,19 +404,14 @@ function authMiddleware(
   res,
   next
 ) {
-
   const authHeader =
     req.headers.authorization || "";
 
   if (
-    !authHeader.startsWith(
-      "Bearer "
-    )
+    !authHeader.startsWith("Bearer ")
   ) {
-
     return res.status(401).json({
       success: false,
-
       message:
         "Authentication required."
     });
@@ -437,28 +421,18 @@ function authMiddleware(
     authHeader.substring(7);
 
   try {
-
     const decoded =
       jwt.verify(
         token,
         JWT_SECRET
       );
 
-    req.user =
-      decoded;
+    req.user = decoded;
 
     next();
-
   } catch (error) {
-
-    console.error(
-      "JWT ERROR:",
-      error.message
-    );
-
     return res.status(401).json({
       success: false,
-
       message:
         "Invalid or expired token."
     });
@@ -469,10 +443,7 @@ function authMiddleware(
    USER HELPERS
 ========================================================= */
 
-function findUserById(
-  userId
-) {
-
+function findUserById(userId) {
   const users =
     readJSON(
       USERS_FILE,
@@ -486,10 +457,7 @@ function findUserById(
   );
 }
 
-function findUserByEmail(
-  email
-) {
-
+function findUserByEmail(email) {
   const users =
     readJSON(
       USERS_FILE,
@@ -507,14 +475,26 @@ function findUserByEmail(
   );
 }
 
+function safeUser(user) {
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    name: user.name,
+    phone: user.phone,
+    email: user.email,
+    verified: Boolean(user.verified),
+    createdAt: user.createdAt
+  };
+}
+
 /* =========================================================
-   WALLET HELPERS
+   WALLET
 ========================================================= */
 
-function getWallet(
-  userId
-) {
-
+function getWallet(userId) {
   const wallets =
     readJSON(
       WALLETS_FILE,
@@ -529,19 +509,13 @@ function getWallet(
     );
 
   if (!wallet) {
-
     wallet = {
       userId,
-
       balance: 0,
-
       bonus: 0,
-
       cashback: 0,
-
       createdAt:
         new Date().toISOString(),
-
       updatedAt:
         new Date().toISOString()
     };
@@ -561,7 +535,6 @@ function updateWallet(
   userId,
   changes
 ) {
-
   const wallets =
     readJSON(
       WALLETS_FILE,
@@ -576,20 +549,12 @@ function updateWallet(
     );
 
   if (!wallet) {
-
     wallet = {
       userId,
-
       balance: 0,
-
       bonus: 0,
-
       cashback: 0,
-
       createdAt:
-        new Date().toISOString(),
-
-      updatedAt:
         new Date().toISOString()
     };
 
@@ -597,8 +562,7 @@ function updateWallet(
   }
 
   if (
-    changes.balance !==
-    undefined
+    changes.balance !== undefined
   ) {
     wallet.balance =
       numberValue(
@@ -607,8 +571,7 @@ function updateWallet(
   }
 
   if (
-    changes.bonus !==
-    undefined
+    changes.bonus !== undefined
   ) {
     wallet.bonus =
       numberValue(
@@ -617,8 +580,7 @@ function updateWallet(
   }
 
   if (
-    changes.cashback !==
-    undefined
+    changes.cashback !== undefined
   ) {
     wallet.cashback =
       numberValue(
@@ -641,7 +603,6 @@ function addWalletBalance(
   userId,
   amount
 ) {
-
   const wallet =
     getWallet(userId);
 
@@ -649,9 +610,7 @@ function addWalletBalance(
     userId,
     {
       balance:
-        numberValue(
-          wallet.balance
-        ) +
+        numberValue(wallet.balance) +
         numberValue(amount)
     }
   );
@@ -661,7 +620,6 @@ function deductWalletBalance(
   userId,
   amount
 ) {
-
   const wallet =
     getWallet(userId);
 
@@ -674,10 +632,8 @@ function deductWalletBalance(
     numberValue(amount);
 
   if (current < cost) {
-
     return {
       success: false,
-
       wallet
     };
   }
@@ -693,9 +649,7 @@ function deductWalletBalance(
 
   return {
     success: true,
-
-    wallet:
-      updated
+    wallet: updated
   };
 }
 
@@ -706,7 +660,6 @@ function deductWalletBalance(
 function saveTransaction(
   transaction
 ) {
-
   const transactions =
     readJSON(
       TRANSACTIONS_FILE,
@@ -726,31 +679,63 @@ function saveTransaction(
 }
 
 /* =========================================================
+   NOTIFICATIONS
+========================================================= */
+
+function createNotification({
+  userId,
+  title,
+  message,
+  type = "info"
+}) {
+  const notifications =
+    readJSON(
+      NOTIFICATIONS_FILE,
+      []
+    );
+
+  const notification = {
+    id: makeId("NOT"),
+    userId,
+    title,
+    message,
+    type,
+    read: false,
+    createdAt:
+      new Date().toISOString()
+  };
+
+  notifications.unshift(
+    notification
+  );
+
+  writeJSON(
+    NOTIFICATIONS_FILE,
+    notifications
+  );
+
+  return notification;
+}
+
+/* =========================================================
    HEALTH
 ========================================================= */
 
 app.get(
   "/api/health",
   async (req, res) => {
-
     let gmailReady = false;
 
     if (mailTransporter) {
-
       try {
-
         await mailTransporter.verify();
-
         gmailReady = true;
-
       } catch {
-
         gmailReady = false;
       }
     }
 
     res.json({
-
       success: true,
 
       server: true,
@@ -759,7 +744,7 @@ app.get(
         "SIH DATA SUB",
 
       version:
-        "3.1.0",
+        "4.0.0",
 
       port:
         PORT,
@@ -781,21 +766,44 @@ app.get(
           : "PENDING",
 
       vtuConfigured:
-        providerConfigured()
+        providerConfigured(),
+
+      features: {
+        authentication: true,
+        forgotPassword: true,
+        wallet: true,
+        fundingFlow: true,
+        bonus: true,
+        cashback: true,
+        notifications: true,
+        transactions: true,
+        profile: true,
+        security: true,
+        airtime: true,
+        data: true,
+        cableTV: true,
+        electricity: true,
+        rechargePIN: true,
+        dataPIN: true,
+        eduPIN:
+          "PENDING_PROVIDER",
+        bulkSMS:
+          "PENDING_PROVIDER",
+        airtimeSwap:
+          "PENDING_PROVIDER"
+      }
     });
   }
 );
 
 /* =========================================================
-   AUTH - REQUEST OTP
+   AUTH - REQUEST SIGNUP OTP
 ========================================================= */
 
 app.post(
   "/api/auth/request-otp",
   async (req, res) => {
-
     try {
-
       const name =
         String(
           req.body.name || ""
@@ -812,49 +820,34 @@ app.post(
         );
 
       if (!name) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter your full name."
         });
       }
 
-      if (
-        !isValidPhone(phone)
-      ) {
-
+      if (!isValidPhone(phone)) {
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid Nigerian phone number."
         });
       }
 
-      if (
-        !isValidEmail(email)
-      ) {
-
+      if (!isValidEmail(email)) {
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid email address."
         });
       }
 
-      const existing =
-        findUserByEmail(
-          email
-        );
-
-      if (existing) {
-
+      if (
+        findUserByEmail(email)
+      ) {
         return res.status(409).json({
           success: false,
-
           message:
             "An account with this email already exists."
         });
@@ -863,13 +856,8 @@ app.post(
       const otp =
         Math.floor(
           100000 +
-          Math.random() *
-          900000
+          Math.random() * 900000
         ).toString();
-
-      const expiresAt =
-        Date.now() +
-        10 * 60 * 1000;
 
       otpStore.set(
         email,
@@ -877,7 +865,9 @@ app.post(
           otp,
           name,
           phone,
-          expiresAt
+          expiresAt:
+            Date.now() +
+            10 * 60 * 1000
         }
       );
 
@@ -888,24 +878,19 @@ app.post(
       );
 
       res.json({
-
         success: true,
-
         message:
           "OTP sent to your Gmail address."
       });
 
     } catch (error) {
-
       console.error(
         "REQUEST OTP ERROR:",
         error
       );
 
       res.status(500).json({
-
         success: false,
-
         message:
           error.message ||
           "Unable to send OTP."
@@ -921,9 +906,7 @@ app.post(
 app.post(
   "/api/auth/signup",
   async (req, res) => {
-
     try {
-
       const name =
         String(
           req.body.name || ""
@@ -950,86 +933,61 @@ app.post(
         ).trim();
 
       if (!name) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter your full name."
         });
       }
 
-      if (
-        !isValidPhone(phone)
-      ) {
-
+      if (!isValidPhone(phone)) {
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid Nigerian phone number."
         });
       }
 
-      if (
-        !isValidEmail(email)
-      ) {
-
+      if (!isValidEmail(email)) {
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid email address."
         });
       }
 
-      if (
-        password.length < 6
-      ) {
-
+      if (password.length < 6) {
         return res.status(400).json({
           success: false,
-
           message:
             "Password must be at least 6 characters."
         });
       }
 
       if (!otp) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter the OTP sent to your email."
         });
       }
 
-      const existing =
-        findUserByEmail(
-          email
-        );
-
-      if (existing) {
-
+      if (
+        findUserByEmail(email)
+      ) {
         return res.status(409).json({
           success: false,
-
           message:
             "An account with this email already exists."
         });
       }
 
       const savedOTP =
-        otpStore.get(
-          email
-        );
+        otpStore.get(email);
 
       if (!savedOTP) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "OTP not found. Please request a new OTP."
         });
@@ -1039,14 +997,10 @@ app.post(
         Date.now() >
         savedOTP.expiresAt
       ) {
-
-        otpStore.delete(
-          email
-        );
+        otpStore.delete(email);
 
         return res.status(400).json({
           success: false,
-
           message:
             "OTP has expired. Please request a new one."
         });
@@ -1055,10 +1009,8 @@ app.post(
       if (
         savedOTP.otp !== otp
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Incorrect OTP."
         });
@@ -1077,22 +1029,12 @@ app.post(
         );
 
       const user = {
-
-        id:
-          makeId("USR"),
-
+        id: makeId("USR"),
         name,
-
         phone,
-
         email,
-
-        password:
-          passwordHash,
-
-        verified:
-          true,
-
+        password: passwordHash,
+        verified: true,
         createdAt:
           new Date().toISOString()
       };
@@ -1104,71 +1046,48 @@ app.post(
         users
       );
 
-      getWallet(
-        user.id
-      );
+      getWallet(user.id);
 
-      otpStore.delete(
-        email
-      );
+      createNotification({
+        userId: user.id,
+        title:
+          "Welcome to SIH DATA SUB",
+        message:
+          "Your account was created successfully.",
+        type: "success"
+      });
+
+      otpStore.delete(email);
 
       const token =
         jwt.sign(
           {
-            id:
-              user.id,
-
-            email:
-              user.email
+            id: user.id,
+            email: user.email
           },
-
           JWT_SECRET,
-
           {
-            expiresIn:
-              "30d"
+            expiresIn: "30d"
           }
         );
 
       res.status(201).json({
-
         success: true,
-
         message:
           "Account created successfully.",
-
         token,
-
-        user: {
-
-          id:
-            user.id,
-
-          name:
-            user.name,
-
-          phone:
-            user.phone,
-
-          email:
-            user.email,
-
-          verified:
-            user.verified
-        }
+        user:
+          safeUser(user)
       });
 
     } catch (error) {
-
       console.error(
         "SIGNUP ERROR:",
         error
       );
 
       res.status(500).json({
-
         success: false,
-
         message:
           error.message ||
           "Unable to create account."
@@ -1184,9 +1103,7 @@ app.post(
 app.post(
   "/api/auth/login",
   async (req, res) => {
-
     try {
-
       const email =
         normalizeEmail(
           req.body.email
@@ -1201,25 +1118,19 @@ app.post(
         !email ||
         !password
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter your email and password."
         });
       }
 
       const user =
-        findUserByEmail(
-          email
-        );
+        findUserByEmail(email);
 
       if (!user) {
-
         return res.status(401).json({
           success: false,
-
           message:
             "Invalid email or password."
         });
@@ -1232,10 +1143,8 @@ app.post(
         );
 
       if (!valid) {
-
         return res.status(401).json({
           success: false,
-
           message:
             "Invalid email or password."
         });
@@ -1244,62 +1153,264 @@ app.post(
       const token =
         jwt.sign(
           {
-            id:
-              user.id,
-
-            email:
-              user.email
+            id: user.id,
+            email: user.email
           },
-
           JWT_SECRET,
-
           {
-            expiresIn:
-              "30d"
+            expiresIn: "30d"
           }
         );
 
       res.json({
-
         success: true,
-
         message:
           "Login successful.",
-
         token,
-
-        user: {
-
-          id:
-            user.id,
-
-          name:
-            user.name,
-
-          phone:
-            user.phone,
-
-          email:
-            user.email,
-
-          verified:
-            user.verified
-        }
+        user:
+          safeUser(user)
       });
 
     } catch (error) {
-
       console.error(
         "LOGIN ERROR:",
         error
       );
 
       res.status(500).json({
-
         success: false,
-
         message:
           "Unable to login."
+      });
+    }
+  }
+);
+
+/* =========================================================
+   FORGOT PASSWORD - REQUEST OTP
+========================================================= */
+
+app.post(
+  "/api/auth/forgot-password",
+  async (req, res) => {
+    try {
+      const email =
+        normalizeEmail(
+          req.body.email
+        );
+
+      if (!isValidEmail(email)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Enter a valid email address."
+        });
+      }
+
+      const user =
+        findUserByEmail(email);
+
+      /*
+       * We intentionally return the same
+       * general message whether or not the
+       * email exists.
+       */
+
+      if (!user) {
+        return res.json({
+          success: true,
+          message:
+            "If an account exists for this email, a reset code has been sent."
+        });
+      }
+
+      const otp =
+        Math.floor(
+          100000 +
+          Math.random() * 900000
+        ).toString();
+
+      passwordResetStore.set(
+        email,
+        {
+          otp,
+          expiresAt:
+            Date.now() +
+            10 * 60 * 1000
+        }
+      );
+
+      await sendPasswordResetEmail(
+        email,
+        user.name,
+        otp
+      );
+
+      res.json({
+        success: true,
+        message:
+          "Password reset code sent to your email."
+      });
+
+    } catch (error) {
+      console.error(
+        "FORGOT PASSWORD ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          "Unable to send password reset code."
+      });
+    }
+  }
+);
+
+/* =========================================================
+   FORGOT PASSWORD - RESET
+========================================================= */
+
+app.post(
+  "/api/auth/reset-password",
+  async (req, res) => {
+    try {
+      const email =
+        normalizeEmail(
+          req.body.email
+        );
+
+      const otp =
+        String(
+          req.body.otp || ""
+        ).trim();
+
+      const newPassword =
+        String(
+          req.body.password ||
+          req.body.newPassword ||
+          ""
+        );
+
+      if (!isValidEmail(email)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Enter a valid email address."
+        });
+      }
+
+      if (!otp) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Enter the reset code."
+        });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Password must be at least 6 characters."
+        });
+      }
+
+      const reset =
+        passwordResetStore.get(
+          email
+        );
+
+      if (!reset) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Reset code not found. Request a new code."
+        });
+      }
+
+      if (
+        Date.now() >
+        reset.expiresAt
+      ) {
+        passwordResetStore.delete(
+          email
+        );
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "Reset code has expired."
+        });
+      }
+
+      if (
+        reset.otp !== otp
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Incorrect reset code."
+        });
+      }
+
+      const users =
+        readJSON(
+          USERS_FILE,
+          []
+        );
+
+      const index =
+        users.findIndex(
+          user =>
+            normalizeEmail(
+              user.email
+            ) === email
+        );
+
+      if (index === -1) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Account not found."
+        });
+      }
+
+      users[index].password =
+        await bcrypt.hash(
+          newPassword,
+          10
+        );
+
+      users[index].passwordUpdatedAt =
+        new Date().toISOString();
+
+      writeJSON(
+        USERS_FILE,
+        users
+      );
+
+      passwordResetStore.delete(
+        email
+      );
+
+      res.json({
+        success: true,
+        message:
+          "Password reset successfully. You can now login."
+      });
+
+    } catch (error) {
+      console.error(
+        "RESET PASSWORD ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Unable to reset password."
       });
     }
   }
@@ -1313,47 +1424,205 @@ app.get(
   "/api/auth/me",
   authMiddleware,
   (req, res) => {
-
     const user =
       findUserById(
         req.user.id
       );
 
     if (!user) {
-
       return res.status(404).json({
         success: false,
-
         message:
           "User not found."
       });
     }
 
     res.json({
-
       success: true,
-
-      user: {
-
-        id:
-          user.id,
-
-        name:
-          user.name,
-
-        phone:
-          user.phone,
-
-        email:
-          user.email,
-
-        verified:
-          user.verified,
-
-        createdAt:
-          user.createdAt
-      }
+      user:
+        safeUser(user)
     });
+  }
+);
+
+/* =========================================================
+   PROFILE
+========================================================= */
+
+app.patch(
+  "/api/account/profile",
+  authMiddleware,
+  (req, res) => {
+    const users =
+      readJSON(
+        USERS_FILE,
+        []
+      );
+
+    const index =
+      users.findIndex(
+        user =>
+          String(user.id) ===
+          String(req.user.id)
+      );
+
+    if (index === -1) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "User not found."
+      });
+    }
+
+    const name =
+      req.body.name !== undefined
+        ? String(
+            req.body.name
+          ).trim()
+        : users[index].name;
+
+    const phone =
+      req.body.phone !== undefined
+        ? normalizePhone(
+            req.body.phone
+          )
+        : users[index].phone;
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Name cannot be empty."
+      });
+    }
+
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Enter a valid Nigerian phone number."
+      });
+    }
+
+    users[index].name = name;
+    users[index].phone = phone;
+    users[index].updatedAt =
+      new Date().toISOString();
+
+    writeJSON(
+      USERS_FILE,
+      users
+    );
+
+    res.json({
+      success: true,
+      message:
+        "Profile updated successfully.",
+      user:
+        safeUser(users[index])
+    });
+  }
+);
+
+/* =========================================================
+   CHANGE PASSWORD
+========================================================= */
+
+app.post(
+  "/api/account/change-password",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const currentPassword =
+        String(
+          req.body.currentPassword ||
+          ""
+        );
+
+      const newPassword =
+        String(
+          req.body.newPassword ||
+          ""
+        );
+
+      if (
+        currentPassword.length < 1 ||
+        newPassword.length < 6
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Enter your current password and a new password of at least 6 characters."
+        });
+      }
+
+      const users =
+        readJSON(
+          USERS_FILE,
+          []
+        );
+
+      const index =
+        users.findIndex(
+          user =>
+            String(user.id) ===
+            String(req.user.id)
+        );
+
+      if (index === -1) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "User not found."
+        });
+      }
+
+      const valid =
+        await bcrypt.compare(
+          currentPassword,
+          users[index].password
+        );
+
+      if (!valid) {
+        return res.status(401).json({
+          success: false,
+          message:
+            "Current password is incorrect."
+        });
+      }
+
+      users[index].password =
+        await bcrypt.hash(
+          newPassword,
+          10
+        );
+
+      users[index].passwordUpdatedAt =
+        new Date().toISOString();
+
+      writeJSON(
+        USERS_FILE,
+        users
+      );
+
+      res.json({
+        success: true,
+        message:
+          "Password changed successfully."
+      });
+
+    } catch (error) {
+      console.error(
+        "CHANGE PASSWORD ERROR:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          "Unable to change password."
+      });
+    }
   }
 );
 
@@ -1365,16 +1634,13 @@ app.get(
   "/api/wallet",
   authMiddleware,
   (req, res) => {
-
     const wallet =
       getWallet(
         req.user.id
       );
 
     res.json({
-
       success: true,
-
       wallet
     });
   }
@@ -1384,14 +1650,12 @@ app.get(
   "/api/wallet/balance",
   authMiddleware,
   (req, res) => {
-
     const wallet =
       getWallet(
         req.user.id
       );
 
     res.json({
-
       success: true,
 
       balance:
@@ -1415,6 +1679,110 @@ app.get(
 );
 
 /* =========================================================
+   FUND WALLET - CREATE FUNDING REQUEST
+========================================================= */
+
+app.post(
+  "/api/wallet/fund",
+  authMiddleware,
+  (req, res) => {
+    const amount =
+      numberValue(
+        req.body.amount
+      );
+
+    if (amount < 100) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Minimum funding amount is ₦100."
+      });
+    }
+
+    const funding =
+      readJSON(
+        FUNDING_FILE,
+        []
+      );
+
+    const fundingId =
+      makeId("FUND");
+
+    const record = {
+      id: fundingId,
+      userId: req.user.id,
+      amount,
+      status: "pending",
+      provider:
+        process.env.PAYMENT_PROVIDER ||
+        "PENDING",
+      createdAt:
+        new Date().toISOString()
+    };
+
+    funding.unshift(record);
+
+    writeJSON(
+      FUNDING_FILE,
+      funding
+    );
+
+    saveTransaction({
+      id: fundingId,
+      userId: req.user.id,
+      type: "funding",
+      service: "Wallet Funding",
+      amount,
+      status: "pending",
+      createdAt:
+        new Date().toISOString()
+    });
+
+    createNotification({
+      userId: req.user.id,
+      title:
+        "Funding request created",
+      message:
+        `Your ₦${amount.toLocaleString()} wallet funding request is pending.`,
+      type: "info"
+    });
+
+    res.status(201).json({
+      success: true,
+      message:
+        "Funding request created. Payment provider integration is pending.",
+      funding: record
+    });
+  }
+);
+
+/* =========================================================
+   FUNDING HISTORY
+========================================================= */
+
+app.get(
+  "/api/wallet/funding",
+  authMiddleware,
+  (req, res) => {
+    const funding =
+      readJSON(
+        FUNDING_FILE,
+        []
+      );
+
+    res.json({
+      success: true,
+      funding:
+        funding.filter(
+          item =>
+            String(item.userId) ===
+            String(req.user.id)
+        )
+    });
+  }
+);
+
+/* =========================================================
    DEV WALLET TEST
 ========================================================= */
 
@@ -1422,17 +1790,14 @@ app.post(
   "/api/dev/add-wallet",
   authMiddleware,
   (req, res) => {
-
     const amount =
       numberValue(
         req.body.amount
       );
 
     if (amount <= 0) {
-
       return res.status(400).json({
         success: false,
-
         message:
           "Enter a valid amount."
       });
@@ -1444,14 +1809,233 @@ app.post(
         amount
       );
 
+    saveTransaction({
+      id: makeId("DEVFUND"),
+      userId: req.user.id,
+      type: "dev_funding",
+      service:
+        "Development Wallet Credit",
+      amount,
+      status: "successful",
+      createdAt:
+        new Date().toISOString()
+    });
+
     res.json({
-
       success: true,
-
       message:
-        "Wallet updated for testing.",
-
+        "Development wallet updated.",
       wallet
+    });
+  }
+);
+
+/* =========================================================
+   BONUS / CASHBACK
+========================================================= */
+
+app.post(
+  "/api/wallet/redeem-bonus",
+  authMiddleware,
+  (req, res) => {
+    const wallet =
+      getWallet(
+        req.user.id
+      );
+
+    const amount =
+      numberValue(
+        req.body.amount
+      );
+
+    if (amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Enter a valid bonus amount."
+      });
+    }
+
+    if (
+      numberValue(wallet.bonus) <
+      amount
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Insufficient bonus balance."
+      });
+    }
+
+    const updated =
+      updateWallet(
+        req.user.id,
+        {
+          bonus:
+            wallet.bonus - amount,
+
+          balance:
+            wallet.balance + amount
+        }
+      );
+
+    saveTransaction({
+      id: makeId("BONUS"),
+      userId: req.user.id,
+      type: "bonus_redemption",
+      service: "Bonus",
+      amount,
+      status: "successful",
+      createdAt:
+        new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      message:
+        "Bonus redeemed successfully.",
+      wallet: updated
+    });
+  }
+);
+
+app.post(
+  "/api/wallet/redeem-cashback",
+  authMiddleware,
+  (req, res) => {
+    const wallet =
+      getWallet(
+        req.user.id
+      );
+
+    const amount =
+      numberValue(
+        req.body.amount
+      );
+
+    if (amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Enter a valid cashback amount."
+      });
+    }
+
+    if (
+      numberValue(wallet.cashback) <
+      amount
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Insufficient cashback balance."
+      });
+    }
+
+    const updated =
+      updateWallet(
+        req.user.id,
+        {
+          cashback:
+            wallet.cashback - amount,
+
+          balance:
+            wallet.balance + amount
+        }
+      );
+
+    saveTransaction({
+      id: makeId("CASH"),
+      userId: req.user.id,
+      type: "cashback_redemption",
+      service: "Cashback",
+      amount,
+      status: "successful",
+      createdAt:
+        new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      message:
+        "Cashback redeemed successfully.",
+      wallet: updated
+    });
+  }
+);
+
+/* =========================================================
+   NOTIFICATIONS
+========================================================= */
+
+app.get(
+  "/api/notifications",
+  authMiddleware,
+  (req, res) => {
+    const notifications =
+      readJSON(
+        NOTIFICATIONS_FILE,
+        []
+      );
+
+    const userNotifications =
+      notifications.filter(
+        item =>
+          String(item.userId) ===
+          String(req.user.id)
+      );
+
+    res.json({
+      success: true,
+      notifications:
+        userNotifications,
+
+      unread:
+        userNotifications.filter(
+          item => !item.read
+        ).length
+    });
+  }
+);
+
+app.post(
+  "/api/notifications/:id/read",
+  authMiddleware,
+  (req, res) => {
+    const notifications =
+      readJSON(
+        NOTIFICATIONS_FILE,
+        []
+      );
+
+    const notification =
+      notifications.find(
+        item =>
+          String(item.id) ===
+            String(req.params.id) &&
+          String(item.userId) ===
+            String(req.user.id)
+      );
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Notification not found."
+      });
+    }
+
+    notification.read = true;
+
+    writeJSON(
+      NOTIFICATIONS_FILE,
+      notifications
+    );
+
+    res.json({
+      success: true,
+      message:
+        "Notification marked as read."
     });
   }
 );
@@ -1464,37 +2048,25 @@ app.get(
   "/api/provider/airtime-networks",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const result =
         await vtuGet(
           "/get-networks?service=airtime"
         );
 
-      return res
+      res
         .status(
           providerHttpStatus(result)
         )
         .json({
-
           success:
             providerSuccess(result),
-
           ...result.data
         });
 
     } catch (error) {
-
-      console.error(
-        "AIRTIME NETWORK ERROR:",
-        error
-      );
-
-      return res.status(502).json({
-
+      res.status(502).json({
         success: false,
-
         message:
           error.message ||
           "Unable to load airtime networks."
@@ -1511,134 +2083,28 @@ app.get(
   "/api/provider/data-networks",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const result =
         await vtuGet(
           "/get-networks?service=data"
         );
 
-      return res
+      res
         .status(
           providerHttpStatus(result)
         )
         .json({
-
           success:
             providerSuccess(result),
-
           ...result.data
         });
 
     } catch (error) {
-
-      console.error(
-        "DATA NETWORK ERROR:",
-        error
-      );
-
-      return res.status(502).json({
-
+      res.status(502).json({
         success: false,
-
         message:
           error.message ||
           "Unable to load data networks."
-      });
-    }
-  }
-);
-
-/* =========================================================
-   VTUPLUG AIRTIME PIN NETWORKS
-========================================================= */
-
-app.get(
-  "/api/provider/airtime-pin-networks",
-  authMiddleware,
-  async (req, res) => {
-
-    try {
-
-      const result =
-        await vtuGet(
-          "/get-pin-networks?service=airtimepin"
-        );
-
-      return res
-        .status(
-          providerHttpStatus(result)
-        )
-        .json({
-
-          success:
-            providerSuccess(result),
-
-          ...result.data
-        });
-
-    } catch (error) {
-
-      console.error(
-        "AIRTIME PIN NETWORK ERROR:",
-        error
-      );
-
-      return res.status(502).json({
-
-        success: false,
-
-        message:
-          error.message ||
-          "Unable to load airtime PIN networks."
-      });
-    }
-  }
-);
-
-/* =========================================================
-   VTUPLUG DATA PIN NETWORKS
-========================================================= */
-
-app.get(
-  "/api/provider/data-pin-networks",
-  authMiddleware,
-  async (req, res) => {
-
-    try {
-
-      const result =
-        await vtuGet(
-          "/get-pin-networks?service=Datapin"
-        );
-
-      return res
-        .status(
-          providerHttpStatus(result)
-        )
-        .json({
-
-          success:
-            providerSuccess(result),
-
-          ...result.data
-        });
-
-    } catch (error) {
-
-      console.error(
-        "DATA PIN NETWORK ERROR:",
-        error
-      );
-
-      return res.status(502).json({
-
-        success: false,
-
-        message:
-          error.message ||
-          "Unable to load data PIN networks."
       });
     }
   }
@@ -1652,9 +2118,7 @@ app.get(
   "/api/data/plans",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const network =
         req.query.network;
 
@@ -1662,39 +2126,26 @@ app.get(
         "/get-networks?service=data";
 
       if (network) {
-
         endpoint +=
           `&network=${encodeURIComponent(network)}`;
       }
 
       const result =
-        await vtuGet(
-          endpoint
-        );
+        await vtuGet(endpoint);
 
-      return res
+      res
         .status(
           providerHttpStatus(result)
         )
         .json({
-
           success:
             providerSuccess(result),
-
           ...result.data
         });
 
     } catch (error) {
-
-      console.error(
-        "DATA PLANS ERROR:",
-        error
-      );
-
-      return res.status(502).json({
-
+      res.status(502).json({
         success: false,
-
         message:
           error.message ||
           "Unable to load data plans."
@@ -1711,9 +2162,7 @@ app.post(
   "/api/airtime/purchase",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const network =
         Number(
           req.body.network
@@ -1730,32 +2179,24 @@ app.post(
         );
 
       if (!network) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Select a network."
         });
       }
 
-      if (
-        !isValidPhone(phone)
-      ) {
-
+      if (!isValidPhone(phone)) {
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid Nigerian phone number."
         });
       }
 
       if (amount <= 0) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid amount."
         });
@@ -1767,14 +2208,11 @@ app.post(
         );
 
       if (
-        numberValue(
-          wallet.balance
-        ) < amount
+        wallet.balance <
+        amount
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Insufficient wallet balance."
         });
@@ -1786,20 +2224,12 @@ app.post(
       const result =
         await vtuPost(
           "/airtime",
-
           {
             network,
-
             phone,
-
             amount,
-
-            type:
-              "VTU",
-
-            bypass:
-              false,
-
+            type: "VTU",
+            bypass: false,
             "request-id":
               requestId
           }
@@ -1808,20 +2238,14 @@ app.post(
       if (
         !providerSuccess(result)
       ) {
-
         return res
           .status(
             providerHttpStatus(result)
           )
           .json({
-
             success: false,
-
             message:
-              providerMessage(
-                result
-              ),
-
+              providerMessage(result),
             provider:
               result.data
           });
@@ -1834,72 +2258,54 @@ app.post(
         );
 
       if (!deducted.success) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Wallet balance changed before completion."
         });
       }
 
       saveTransaction({
-
-        id:
-          requestId,
-
+        id: requestId,
         userId:
           req.user.id,
-
-        type:
-          "airtime",
-
-        service:
-          "Airtime",
-
+        type: "airtime",
+        service: "Airtime",
         amount,
-
         phone,
-
         network,
-
         status:
           "successful",
-
         providerResponse:
           result.data,
-
         createdAt:
           new Date().toISOString()
       });
 
-      res.json({
-
-        success: true,
-
+      createNotification({
+        userId:
+          req.user.id,
+        title:
+          "Airtime purchase successful",
         message:
-          providerMessage(
-            result
-          ),
+          `₦${amount.toLocaleString()} airtime was sent to ${phone}.`,
+        type:
+          "success"
+      });
 
+      res.json({
+        success: true,
+        message:
+          providerMessage(result),
         wallet:
           deducted.wallet,
-
         transaction:
           result.data
       });
 
     } catch (error) {
-
-      console.error(
-        "AIRTIME ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
           error.message ||
           "Airtime purchase failed."
@@ -1916,9 +2322,7 @@ app.post(
   "/api/data/purchase",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const network =
         Number(
           req.body.network
@@ -1939,22 +2343,16 @@ app.post(
         );
 
       if (!network) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Select a network."
         });
       }
 
-      if (
-        !isValidPhone(phone)
-      ) {
-
+      if (!isValidPhone(phone)) {
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid Nigerian phone number."
         });
@@ -1965,20 +2363,16 @@ app.post(
         plan === null ||
         String(plan).trim() === ""
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Select a data plan."
         });
       }
 
       if (amount <= 0) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid plan amount."
         });
@@ -1990,14 +2384,11 @@ app.post(
         );
 
       if (
-        numberValue(
-          wallet.balance
-        ) < amount
+        wallet.balance <
+        amount
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Insufficient wallet balance."
         });
@@ -2009,16 +2400,11 @@ app.post(
       const result =
         await vtuPost(
           "/data",
-
           {
             network,
-
             phone,
-
             plan,
-
             amount,
-
             "request-id":
               requestId
           }
@@ -2027,20 +2413,14 @@ app.post(
       if (
         !providerSuccess(result)
       ) {
-
         return res
           .status(
             providerHttpStatus(result)
           )
           .json({
-
             success: false,
-
             message:
-              providerMessage(
-                result
-              ),
-
+              providerMessage(result),
             provider:
               result.data
           });
@@ -2053,74 +2433,55 @@ app.post(
         );
 
       if (!deducted.success) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Wallet balance changed before completion."
         });
       }
 
       saveTransaction({
-
-        id:
-          requestId,
-
+        id: requestId,
         userId:
           req.user.id,
-
-        type:
-          "data",
-
-        service:
-          "Data",
-
+        type: "data",
+        service: "Data",
         amount,
-
         phone,
-
         network,
-
         plan,
-
         status:
           "successful",
-
         providerResponse:
           result.data,
-
         createdAt:
           new Date().toISOString()
       });
 
-      res.json({
-
-        success: true,
-
+      createNotification({
+        userId:
+          req.user.id,
+        title:
+          "Data purchase successful",
         message:
-          providerMessage(
-            result
-          ),
+          `Data purchase of ₦${amount.toLocaleString()} was successful.`,
+        type:
+          "success"
+      });
 
+      res.json({
+        success: true,
+        message:
+          providerMessage(result),
         wallet:
           deducted.wallet,
-
         transaction:
           result.data
       });
 
     } catch (error) {
-
-      console.error(
-        "DATA ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
           error.message ||
           "Data purchase failed."
@@ -2130,16 +2491,14 @@ app.post(
 );
 
 /* =========================================================
-   CABLE PROVIDERS
+   CABLE TV
 ========================================================= */
 
 app.get(
   "/api/cable/providers",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const cable =
         req.query.cable ||
         "Gotv";
@@ -2149,47 +2508,32 @@ app.get(
           `/get-cable-providers?cable=${encodeURIComponent(cable)}`
         );
 
-      return res
+      res
         .status(
           providerHttpStatus(result)
         )
         .json({
-
           success:
             providerSuccess(result),
-
           ...result.data
         });
 
     } catch (error) {
-
-      console.error(
-        "CABLE PROVIDER ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
-          error.message
+          error.message ||
+          "Unable to load cable providers."
       });
     }
   }
 );
 
-/* =========================================================
-   CABLE VALIDATION
-========================================================= */
-
 app.post(
   "/api/cable/validate",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const cable =
         Number(
           req.body.cable
@@ -2201,10 +2545,8 @@ app.post(
         ).trim();
 
       if (!cable || !iuc) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter the cable provider and IUC number."
         });
@@ -2213,55 +2555,38 @@ app.post(
       const result =
         await vtuPost(
           "/cable/cable-validation",
-
           {
             cable,
-
             iuc
           }
         );
 
-      return res
+      res
         .status(
           providerHttpStatus(result)
         )
         .json({
-
           success:
             providerSuccess(result),
-
           ...result.data
         });
 
     } catch (error) {
-
-      console.error(
-        "CABLE VALIDATION ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
-          error.message
+          error.message ||
+          "Cable validation failed."
       });
     }
   }
 );
 
-/* =========================================================
-   CABLE PURCHASE
-========================================================= */
-
 app.post(
   "/api/cable/purchase",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const cable =
         Number(
           req.body.cable
@@ -2289,20 +2614,16 @@ app.post(
         !iuc ||
         !cablePlan
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Complete the cable TV details."
         });
       }
 
       if (amount <= 0) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid subscription amount."
         });
@@ -2314,14 +2635,11 @@ app.post(
         );
 
       if (
-        numberValue(
-          wallet.balance
-        ) < amount
+        wallet.balance <
+        amount
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Insufficient wallet balance."
         });
@@ -2333,15 +2651,11 @@ app.post(
       const result =
         await vtuPost(
           "/cable",
-
           {
             cable,
-
             iuc,
-
             cable_plan:
               cablePlan,
-
             "request-id":
               requestId
           }
@@ -2350,20 +2664,14 @@ app.post(
       if (
         !providerSuccess(result)
       ) {
-
         return res
           .status(
             providerHttpStatus(result)
           )
           .json({
-
             success: false,
-
             message:
-              providerMessage(
-                result
-              ),
-
+              providerMessage(result),
             provider:
               result.data
           });
@@ -2386,76 +2694,46 @@ app.post(
         );
 
       if (!deducted.success) {
-
         return res.status(400).json({
           success: false,
-
           message:
-            "Insufficient wallet balance for provider charge."
+            "Insufficient wallet balance."
         });
       }
 
       saveTransaction({
-
-        id:
-          requestId,
-
+        id: requestId,
         userId:
           req.user.id,
-
-        type:
-          "cable",
-
-        service:
-          "Cable TV",
-
+        type: "cable",
+        service: "Cable TV",
         amount:
           finalAmount,
-
         iuc,
-
         cable,
-
         plan:
           cablePlan,
-
         status:
           "successful",
-
         providerResponse:
           result.data,
-
         createdAt:
           new Date().toISOString()
       });
 
       res.json({
-
         success: true,
-
         message:
-          providerMessage(
-            result
-          ),
-
+          providerMessage(result),
         wallet:
           deducted.wallet,
-
         transaction:
           result.data
       });
 
     } catch (error) {
-
-      console.error(
-        "CABLE ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
           error.message ||
           "Cable TV purchase failed."
@@ -2465,62 +2743,45 @@ app.post(
 );
 
 /* =========================================================
-   ELECTRICITY PROVIDERS
+   ELECTRICITY
 ========================================================= */
 
 app.get(
   "/api/electricity/providers",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const result =
         await vtuGet(
           "/get-bill"
         );
 
-      return res
+      res
         .status(
           providerHttpStatus(result)
         )
         .json({
-
           success:
             providerSuccess(result),
-
           ...result.data
         });
 
     } catch (error) {
-
-      console.error(
-        "ELECTRICITY PROVIDER ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
-          error.message
+          error.message ||
+          "Unable to load electricity providers."
       });
     }
   }
 );
 
-/* =========================================================
-   ELECTRICITY VALIDATION
-========================================================= */
-
 app.post(
   "/api/electricity/validate",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const disco =
         Number(
           req.body.disco
@@ -2544,10 +2805,8 @@ app.post(
         !disco ||
         !meterNumber
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter the electricity provider and meter number."
         });
@@ -2557,10 +2816,8 @@ app.post(
         meterType !== "prepaid" &&
         meterType !== "postpaid"
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Meter type must be prepaid or postpaid."
         });
@@ -2569,59 +2826,41 @@ app.post(
       const result =
         await vtuPost(
           "/bill/bill-validation",
-
           {
             disco,
-
             meter_number:
               meterNumber,
-
             meter_type:
               meterType
           }
         );
 
-      return res
+      res
         .status(
           providerHttpStatus(result)
         )
         .json({
-
           success:
             providerSuccess(result),
-
           ...result.data
         });
 
     } catch (error) {
-
-      console.error(
-        "ELECTRICITY VALIDATION ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
-          error.message
+          error.message ||
+          "Electricity validation failed."
       });
     }
   }
 );
 
-/* =========================================================
-   ELECTRICITY PURCHASE
-========================================================= */
-
 app.post(
   "/api/electricity/purchase",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const disco =
         Number(
           req.body.disco
@@ -2650,10 +2889,8 @@ app.post(
         !disco ||
         !meterNumber
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Complete the electricity details."
         });
@@ -2663,20 +2900,16 @@ app.post(
         meterType !== "prepaid" &&
         meterType !== "postpaid"
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Meter type must be prepaid or postpaid."
         });
       }
 
       if (amount <= 0) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid amount."
         });
@@ -2688,14 +2921,11 @@ app.post(
         );
 
       if (
-        numberValue(
-          wallet.balance
-        ) < amount
+        wallet.balance <
+        amount
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Insufficient wallet balance."
         });
@@ -2707,18 +2937,13 @@ app.post(
       const result =
         await vtuPost(
           "/bill",
-
           {
             disco,
-
             meter_number:
               meterNumber,
-
             meter_type:
               meterType,
-
             amount,
-
             "request-id":
               requestId
           }
@@ -2727,20 +2952,14 @@ app.post(
       if (
         !providerSuccess(result)
       ) {
-
         return res
           .status(
             providerHttpStatus(result)
           )
           .json({
-
             success: false,
-
             message:
-              providerMessage(
-                result
-              ),
-
+              providerMessage(result),
             provider:
               result.data
           });
@@ -2753,82 +2972,52 @@ app.post(
         );
 
       if (!deducted.success) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Wallet balance changed before completion."
         });
       }
 
       saveTransaction({
-
-        id:
-          requestId,
-
+        id: requestId,
         userId:
           req.user.id,
-
         type:
           "electricity",
-
         service:
           "Electricity",
-
         amount,
-
         disco,
-
         meterNumber,
-
         meterType,
-
         token:
           result.data.token ||
           null,
-
         status:
           "successful",
-
         providerResponse:
           result.data,
-
         createdAt:
           new Date().toISOString()
       });
 
       res.json({
-
         success: true,
-
         message:
-          providerMessage(
-            result
-          ),
-
+          providerMessage(result),
         token:
           result.data.token ||
           null,
-
         wallet:
           deducted.wallet,
-
         transaction:
           result.data
       });
 
     } catch (error) {
-
-      console.error(
-        "ELECTRICITY ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
           error.message ||
           "Electricity payment failed."
@@ -2838,16 +3027,14 @@ app.post(
 );
 
 /* =========================================================
-   AIRTIME PIN
+   RECHARGE PIN
 ========================================================= */
 
 app.post(
   "/api/recharge-pin/purchase",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const network =
         Number(
           req.body.network
@@ -2876,20 +3063,16 @@ app.post(
         amount * quantity;
 
       if (!network) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Select a PIN network."
         });
       }
 
       if (amount <= 0) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid PIN amount."
         });
@@ -2899,10 +3082,8 @@ app.post(
         quantity < 1 ||
         quantity > 50
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Quantity must be between 1 and 50."
         });
@@ -2914,14 +3095,11 @@ app.post(
         );
 
       if (
-        numberValue(
-          wallet.balance
-        ) < total
+        wallet.balance <
+        total
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Insufficient wallet balance."
         });
@@ -2933,18 +3111,13 @@ app.post(
       const result =
         await vtuPost(
           "/recharge_card",
-
           {
             network,
-
             amount:
               String(amount),
-
             quantity,
-
             business_name:
               businessName,
-
             "request-id":
               requestId
           }
@@ -2953,20 +3126,14 @@ app.post(
       if (
         !providerSuccess(result)
       ) {
-
         return res
           .status(
             providerHttpStatus(result)
           )
           .json({
-
             success: false,
-
             message:
-              providerMessage(
-                result
-              ),
-
+              providerMessage(result),
             provider:
               result.data
           });
@@ -2989,89 +3156,58 @@ app.post(
         );
 
       if (!deducted.success) {
-
         return res.status(400).json({
           success: false,
-
           message:
-            "Insufficient wallet balance for provider charge."
+            "Insufficient wallet balance."
         });
       }
 
       saveTransaction({
-
-        id:
-          requestId,
-
+        id: requestId,
         userId:
           req.user.id,
-
         type:
           "airtime_pin",
-
         service:
           "Recharge PIN",
-
         amount:
           finalAmount,
-
         network,
-
         quantity,
-
         status:
           "successful",
-
         pins:
           result.data.pin ||
           null,
-
         serial:
           result.data.serial ||
           null,
-
         providerResponse:
           result.data,
-
         createdAt:
           new Date().toISOString()
       });
 
       res.json({
-
         success: true,
-
         message:
-          providerMessage(
-            result
-          ),
-
+          providerMessage(result),
         pins:
           result.data.pin ||
           null,
-
         serial:
           result.data.serial ||
           null,
-
         wallet:
           deducted.wallet,
-
         transaction:
           result.data
       });
 
     } catch (error) {
-
-      console.error(
-        "AIRTIME PIN ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
           error.message ||
           "Recharge PIN purchase failed."
@@ -3088,9 +3224,7 @@ app.post(
   "/api/data-pin/purchase",
   authMiddleware,
   async (req, res) => {
-
     try {
-
       const network =
         Number(
           req.body.network
@@ -3119,20 +3253,16 @@ app.post(
         amount * quantity;
 
       if (!network) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Select a data PIN network."
         });
       }
 
       if (amount <= 0) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Enter a valid PIN amount."
         });
@@ -3142,10 +3272,8 @@ app.post(
         quantity < 1 ||
         quantity > 50
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Quantity must be between 1 and 50."
         });
@@ -3157,14 +3285,11 @@ app.post(
         );
 
       if (
-        numberValue(
-          wallet.balance
-        ) < total
+        wallet.balance <
+        total
       ) {
-
         return res.status(400).json({
           success: false,
-
           message:
             "Insufficient wallet balance."
         });
@@ -3176,18 +3301,13 @@ app.post(
       const result =
         await vtuPost(
           "/data_card",
-
           {
             network,
-
             amount:
               String(amount),
-
             quantity,
-
             business_name:
               businessName,
-
             "request-id":
               requestId
           }
@@ -3196,20 +3316,14 @@ app.post(
       if (
         !providerSuccess(result)
       ) {
-
         return res
           .status(
             providerHttpStatus(result)
           )
           .json({
-
             success: false,
-
             message:
-              providerMessage(
-                result
-              ),
-
+              providerMessage(result),
             provider:
               result.data
           });
@@ -3232,89 +3346,58 @@ app.post(
         );
 
       if (!deducted.success) {
-
         return res.status(400).json({
           success: false,
-
           message:
-            "Insufficient wallet balance for provider charge."
+            "Insufficient wallet balance."
         });
       }
 
       saveTransaction({
-
-        id:
-          requestId,
-
+        id: requestId,
         userId:
           req.user.id,
-
         type:
           "data_pin",
-
         service:
           "Data PIN",
-
         amount:
           finalAmount,
-
         network,
-
         quantity,
-
         status:
           "successful",
-
         pins:
           result.data.pin ||
           null,
-
         serial:
           result.data.serial ||
           null,
-
         providerResponse:
           result.data,
-
         createdAt:
           new Date().toISOString()
       });
 
       res.json({
-
         success: true,
-
         message:
-          providerMessage(
-            result
-          ),
-
+          providerMessage(result),
         pins:
           result.data.pin ||
           null,
-
         serial:
           result.data.serial ||
           null,
-
         wallet:
           deducted.wallet,
-
         transaction:
           result.data
       });
 
     } catch (error) {
-
-      console.error(
-        "DATA PIN ERROR:",
-        error
-      );
-
       res.status(502).json({
-
         success: false,
-
         message:
           error.message ||
           "Data PIN purchase failed."
@@ -3324,20 +3407,19 @@ app.post(
 );
 
 /* =========================================================
-   EXAM / EDU PIN
+   EDU PIN
 ========================================================= */
 
 app.post(
   "/api/edu-pin/purchase",
   authMiddleware,
   async (req, res) => {
-
     res.status(501).json({
-
       success: false,
-
+      providerConfigured:
+        providerConfigured(),
       message:
-        "Edu PIN provider connection needs the exact VTUPLUG Exam PIN request fields before it is enabled."
+        "Edu PIN is ready for frontend integration but the exact VTUPLUG Exam PIN API fields are required before purchase can be enabled."
     });
   }
 );
@@ -3350,13 +3432,12 @@ app.post(
   "/api/bulk-sms/send",
   authMiddleware,
   async (req, res) => {
-
     res.status(501).json({
-
       success: false,
-
+      providerConfigured:
+        providerConfigured(),
       message:
-        "Bulk SMS provider connection needs the exact VTUPLUG Bulk SMS request fields before it is enabled."
+        "Bulk SMS is ready for frontend integration but the exact VTUPLUG Bulk SMS API fields are required before sending can be enabled."
     });
   }
 );
@@ -3369,13 +3450,12 @@ app.post(
   "/api/airtime-swap",
   authMiddleware,
   async (req, res) => {
-
     res.status(501).json({
-
       success: false,
-
+      providerConfigured:
+        providerConfigured(),
       message:
-        "Airtime Swap is not enabled in this backend yet."
+        "Airtime Swap is pending provider/API configuration."
     });
   }
 );
@@ -3388,7 +3468,6 @@ app.get(
   "/api/transactions",
   authMiddleware,
   (req, res) => {
-
     const transactions =
       readJSON(
         TRANSACTIONS_FILE,
@@ -3398,33 +3477,22 @@ app.get(
     const userTransactions =
       transactions.filter(
         item =>
-          String(
-            item.userId
-          ) ===
-          String(
-            req.user.id
-          )
+          String(item.userId) ===
+          String(req.user.id)
       );
 
     res.json({
-
       success: true,
-
       transactions:
         userTransactions
     });
   }
 );
 
-/* =========================================================
-   SINGLE TRANSACTION
-========================================================= */
-
 app.get(
   "/api/transactions/:id",
   authMiddleware,
   (req, res) => {
-
     const transactions =
       readJSON(
         TRANSACTIONS_FILE,
@@ -3435,30 +3503,21 @@ app.get(
       transactions.find(
         item =>
           String(item.id) ===
-            String(
-              req.params.id
-            ) &&
+            String(req.params.id) &&
           String(item.userId) ===
-            String(
-              req.user.id
-            )
+            String(req.user.id)
       );
 
     if (!transaction) {
-
       return res.status(404).json({
-
         success: false,
-
         message:
           "Transaction not found."
       });
     }
 
     res.json({
-
       success: true,
-
       transaction
     });
   }
@@ -3472,11 +3531,8 @@ app.post(
   "/api/auth/logout",
   authMiddleware,
   (req, res) => {
-
     res.json({
-
       success: true,
-
       message:
         "Logout successful. Remove the token from the frontend."
     });
@@ -3489,14 +3545,10 @@ app.post(
 
 app.use(
   (req, res) => {
-
     res.status(404).json({
-
       success: false,
-
       message:
         "API route not found.",
-
       path:
         req.originalUrl
     });
@@ -3514,16 +3566,13 @@ app.use(
     res,
     next
   ) => {
-
     console.error(
       "SERVER ERROR:",
       error
     );
 
     res.status(500).json({
-
       success: false,
-
       message:
         error.message ||
         "Internal server error."
@@ -3532,24 +3581,20 @@ app.use(
 );
 
 /* =========================================================
-   START SERVER
+   START
 ========================================================= */
 
 app.listen(
   PORT,
   "0.0.0.0",
   () => {
-
     console.log("");
-
     console.log(
       "=========================================="
     );
-
     console.log(
       "          SIH DATA SUB BACKEND"
     );
-
     console.log(
       "=========================================="
     );
@@ -3559,7 +3604,7 @@ app.listen(
     );
 
     console.log(
-      "Version: 3.1.0"
+      "Version: 4.0.0"
     );
 
     console.log(
@@ -3585,7 +3630,6 @@ app.listen(
     console.log(
       "=========================================="
     );
-
     console.log("");
   }
 );
